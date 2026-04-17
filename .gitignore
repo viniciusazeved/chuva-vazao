@@ -1,0 +1,21 @@
+.venv/
+__pycache__/
+*.pyc
+.claude/
+.pytest_cache/
+.ruff_cache/
+
+# Dados brutos nao redistribuidos (MDB original, caches GEE)
+data/mdb_origem.mdb
+data/dems/
+data/gee_cache/
+
+# SQLite extraido EH redistribuido como referencia (HidroFlu v2.0 freeware)
+# entao nao ignoramos data/chuvavazao.db.
+
+# Saidas de scripts de demo
+out/
+
+# Secrets
+.streamlit/secrets.toml
+.env
