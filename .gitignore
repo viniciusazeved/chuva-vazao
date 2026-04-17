@@ -5,6 +5,11 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
+# uv.lock nao versionado — contem pywin32 Windows-only que quebra
+# build no Streamlit Cloud (Linux). Reproducibilidade via pyproject.toml
+# + requirements.txt.
+uv.lock
+
 # Dados brutos nao redistribuidos (MDB original, caches GEE)
 data/mdb_origem.mdb
 data/dems/
