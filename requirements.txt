@@ -2,7 +2,7 @@ earthengine-api>=1.7.22
 folium>=0.20
 fpdf2>=2.8
 geopandas>=0.14
-kaleido>=1.2
+kaleido==0.2.1
 numpy>=1.24
 pandas>=2.0
 plotly>=5.18
