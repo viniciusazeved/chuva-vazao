@@ -84,3 +84,38 @@ def test_manning_rectangular_fluxo_positivo():
 def test_manning_n_tabela_tem_materiais_chave():
     assert "Concreto liso (manilha)" in h.MANNING_N
     assert h.MANNING_N["Concreto liso (manilha)"] == pytest.approx(0.013)
+
+
+def test_size_circular_n_linhas_diminui_diametro():
+    """Mais linhas -> menor diametro adotado por linha (Q dividida)."""
+    Q = 5.0
+    dim_1 = h.size_circular_culvert(Q_projeto_m3_s=Q, S_m_per_m=0.005, n=0.013, n_linhas=1)
+    dim_3 = h.size_circular_culvert(Q_projeto_m3_s=Q, S_m_per_m=0.005, n=0.013, n_linhas=3)
+    assert dim_3.D_adotado_m < dim_1.D_adotado_m
+
+
+def test_avaliar_circular_manual_warning_se_excede_limite():
+    """Diametro pequeno demais para Q -> warning de lamina excedida."""
+    dim = h.avaliar_circular_manual(
+        Q_projeto_m3_s=2.0, D_m=0.3, S_m_per_m=0.01, n=0.013, n_linhas=1,
+    )
+    assert any("excede" in w for w in dim.warnings)
+
+
+def test_size_box_commercial_escolhe_menor_que_atende():
+    dim = h.size_box_culvert_commercial(
+        Q_projeto_m3_s=2.0, S_m_per_m=0.005, n=0.015, n_linhas=1,
+    )
+    assert (dim.b_m, dim.h_total_m) in h.COMMERCIAL_BOX_SECTIONS_M
+    # Capacidade por linha cobre Q*fator
+    assert dim.operacao.Q_m3_s * dim.fator_seguranca >= 2.0 * dim.fator_seguranca - 1e-6 \
+        or dim.lamina_max_permitida >= dim.operacao.h_m
+
+
+def test_size_box_n_linhas_reduz_secao():
+    Q = 30.0
+    dim_1 = h.size_box_culvert_commercial(Q_projeto_m3_s=Q, S_m_per_m=0.005, n=0.015, n_linhas=1)
+    dim_4 = h.size_box_culvert_commercial(Q_projeto_m3_s=Q, S_m_per_m=0.005, n=0.015, n_linhas=4)
+    area_1 = dim_1.b_m * dim_1.h_total_m
+    area_4 = dim_4.b_m * dim_4.h_total_m
+    assert area_4 < area_1

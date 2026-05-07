@@ -30,6 +30,17 @@ COMMERCIAL_DIAMETERS_M: list[float] = [
     0.30, 0.40, 0.50, 0.60, 0.80, 1.00, 1.20, 1.50, 1.80, 2.00, 2.40, 3.00,
 ]
 
+# Secoes comerciais de bueiro celular (box culvert) BxH (m).
+# Faixa usual de fornecedores brasileiros para drenagem rodoviaria/urbana.
+COMMERCIAL_BOX_SECTIONS_M: list[tuple[float, float]] = [
+    (1.0, 1.0), (1.5, 1.0), (1.5, 1.5),
+    (2.0, 1.5), (2.0, 2.0),
+    (2.5, 2.0), (2.5, 2.5),
+    (3.0, 2.0), (3.0, 2.5), (3.0, 3.0),
+    (4.0, 2.5), (4.0, 3.0),
+    (5.0, 3.0), (5.0, 4.0),
+]
+
 # Coeficiente n de Manning por material (Chaudhry 2008, DAEE).
 MANNING_N: dict[str, float] = {
     "Concreto liso (manilha)": 0.013,
@@ -164,6 +175,7 @@ def size_circular_culvert(
     fator_seguranca: float = 1.10,
     lamina_max_ratio: float = 0.80,
     diametros_comerciais: list[float] | None = None,
+    n_linhas: int = 1,
 ) -> DimensionamentoCircular:
     """
     Seleciona o menor diametro comercial que atenda a vazao de projeto.
@@ -171,25 +183,32 @@ def size_circular_culvert(
     Criterio: lamina de operacao <= lamina_max_ratio * D (norma DAEE/ABNT).
     Aplica fator de seguranca sobre Q antes da selecao; operacao real e
     calculada com Q sem fator.
+
+    Quando `n_linhas` > 1, divide a vazao igualmente entre N tubos em paralelo.
+    A vazao reportada na operacao e a por linha; multiplique por N_linhas para
+    a capacidade total do conjunto.
     """
     if diametros_comerciais is None:
         diametros_comerciais = COMMERCIAL_DIAMETERS_M
+    if n_linhas < 1:
+        raise ValueError(f"n_linhas deve ser >= 1, recebi {n_linhas}.")
 
-    Q_dim = Q_projeto_m3_s * fator_seguranca
+    Q_por_linha = Q_projeto_m3_s / n_linhas
+    Q_dim_por_linha = Q_por_linha * fator_seguranca
 
     for D in diametros_comerciais:
         # Capacidade com a lamina-limite
         h_limite = lamina_max_ratio * D
         Q_cap = manning_circular_partial(D, h_limite, S_m_per_m, n).Q_m3_s
-        if Q_cap >= Q_dim:
-            # Operacao real (Q projeto, sem fator)
-            h_op = lamina_para_vazao_circular(Q_projeto_m3_s, D, S_m_per_m, n)
+        if Q_cap >= Q_dim_por_linha:
+            # Operacao real por linha (Q projeto, sem fator)
+            h_op = lamina_para_vazao_circular(Q_por_linha, D, S_m_per_m, n)
             op = manning_circular_partial(D, h_op, S_m_per_m, n)
             warnings = validar_velocidade(op.v_m_s)
             return DimensionamentoCircular(
                 D_adotado_m=D,
                 Q_projeto_m3_s=Q_projeto_m3_s,
-                Q_fator_seguranca_m3_s=Q_dim,
+                Q_fator_seguranca_m3_s=Q_projeto_m3_s * fator_seguranca,
                 fator_seguranca=fator_seguranca,
                 lamina_max_permitida=h_limite,
                 operacao=op,
@@ -197,8 +216,49 @@ def size_circular_culvert(
             )
 
     raise ValueError(
-        f"Nenhum diametro comercial atende Q={Q_projeto_m3_s:.3f} m^3/s com fator {fator_seguranca}. "
-        f"Maior testado: {diametros_comerciais[-1]} m. Considere canal retangular ou multiplas linhas."
+        f"Nenhum diametro comercial atende Q_por_linha={Q_por_linha:.3f} m^3/s "
+        f"(N={n_linhas}, Q_total={Q_projeto_m3_s:.3f}) com fator {fator_seguranca}. "
+        f"Maior testado: {diametros_comerciais[-1]} m. Aumente N de linhas, "
+        f"adote canal retangular ou diametro maior."
+    )
+
+
+def avaliar_circular_manual(
+    Q_projeto_m3_s: float,
+    D_m: float,
+    S_m_per_m: float,
+    n: float,
+    fator_seguranca: float = 1.10,
+    lamina_max_ratio: float = 0.80,
+    n_linhas: int = 1,
+) -> DimensionamentoCircular:
+    """
+    Avalia um diametro comercial fixo escolhido pelo usuario com N linhas em
+    paralelo. Marca warning se a lamina de operacao ultrapassa o limite.
+    """
+    if n_linhas < 1:
+        raise ValueError(f"n_linhas deve ser >= 1, recebi {n_linhas}.")
+    Q_por_linha = Q_projeto_m3_s / n_linhas
+    h_limite = lamina_max_ratio * D_m
+
+    h_op = lamina_para_vazao_circular(Q_por_linha, D_m, S_m_per_m, n)
+    op = manning_circular_partial(D_m, h_op, S_m_per_m, n)
+    warnings = validar_velocidade(op.v_m_s)
+    if h_op > h_limite:
+        warnings.insert(
+            0,
+            f"Lamina de operacao {h_op * 100:.1f} cm excede o limite "
+            f"{h_limite * 100:.1f} cm ({lamina_max_ratio * 100:.0f}% de D). "
+            f"Aumente o diametro, o N de linhas ou a declividade.",
+        )
+    return DimensionamentoCircular(
+        D_adotado_m=D_m,
+        Q_projeto_m3_s=Q_projeto_m3_s,
+        Q_fator_seguranca_m3_s=Q_projeto_m3_s * fator_seguranca,
+        fator_seguranca=fator_seguranca,
+        lamina_max_permitida=h_limite,
+        operacao=op,
+        warnings=warnings,
     )
 
 
@@ -228,6 +288,121 @@ def manning_rectangular(b_m: float, h_m: float, S_m_per_m: float, n: float) -> E
     return EscoamentoRetangular(
         b_m=b_m, h_m=h_m, A_m2=A, P_m=P, R_m=R, v_m_s=v, Q_m3_s=Q,
         S_m_per_m=S_m_per_m, n=n,
+    )
+
+
+def lamina_para_vazao_retangular(
+    Q_target_m3_s: float, b_m: float, h_total_m: float, S_m_per_m: float, n: float,
+) -> float:
+    """Acha lamina h <= h_total tal que Q(b, h) = Q_target. Brentq."""
+    if Q_target_m3_s <= 0:
+        return 0.0
+    Q_full = manning_rectangular(b_m, h_total_m, S_m_per_m, n).Q_m3_s
+    if Q_target_m3_s >= Q_full:
+        return h_total_m
+
+    def f(h):
+        return manning_rectangular(b_m, h, S_m_per_m, n).Q_m3_s - Q_target_m3_s
+
+    return brentq(f, 1e-6, h_total_m - 1e-6)
+
+
+@dataclass(frozen=True)
+class DimensionamentoBoxComercial:
+    b_m: float
+    h_total_m: float
+    Q_projeto_m3_s: float
+    Q_fator_seguranca_m3_s: float
+    fator_seguranca: float
+    lamina_max_permitida: float
+    operacao: EscoamentoRetangular
+    warnings: list[str]
+
+
+def size_box_culvert_commercial(
+    Q_projeto_m3_s: float,
+    S_m_per_m: float,
+    n: float,
+    fator_seguranca: float = 1.10,
+    lamina_max_ratio: float = 0.85,
+    secoes: list[tuple[float, float]] | None = None,
+    n_linhas: int = 1,
+) -> DimensionamentoBoxComercial:
+    """
+    Seleciona a menor secao comercial (b x h) que atenda a vazao de projeto
+    com lamina de operacao <= lamina_max_ratio * h. Suporta N celulas em
+    paralelo dividindo Q igualmente.
+
+    Ordenacao das secoes: por area crescente — privilegia o menor box que
+    atende, sem favorecer largura ou altura.
+    """
+    if secoes is None:
+        secoes = COMMERCIAL_BOX_SECTIONS_M
+    if n_linhas < 1:
+        raise ValueError(f"n_linhas deve ser >= 1, recebi {n_linhas}.")
+
+    Q_por_linha = Q_projeto_m3_s / n_linhas
+    Q_dim_por_linha = Q_por_linha * fator_seguranca
+    secoes_ordenadas = sorted(secoes, key=lambda bh: bh[0] * bh[1])
+
+    for b, h_total in secoes_ordenadas:
+        h_limite = lamina_max_ratio * h_total
+        Q_cap = manning_rectangular(b, h_limite, S_m_per_m, n).Q_m3_s
+        if Q_cap >= Q_dim_por_linha:
+            h_op = lamina_para_vazao_retangular(Q_por_linha, b, h_total, S_m_per_m, n)
+            op = manning_rectangular(b, h_op, S_m_per_m, n)
+            return DimensionamentoBoxComercial(
+                b_m=b, h_total_m=h_total,
+                Q_projeto_m3_s=Q_projeto_m3_s,
+                Q_fator_seguranca_m3_s=Q_projeto_m3_s * fator_seguranca,
+                fator_seguranca=fator_seguranca,
+                lamina_max_permitida=h_limite,
+                operacao=op,
+                warnings=validar_velocidade(op.v_m_s),
+            )
+
+    raise ValueError(
+        f"Nenhuma secao comercial atende Q_por_linha={Q_por_linha:.3f} m^3/s "
+        f"(N={n_linhas}, Q_total={Q_projeto_m3_s:.3f}). Maior secao testada: "
+        f"{secoes_ordenadas[-1][0]:.1f}x{secoes_ordenadas[-1][1]:.1f} m. "
+        f"Aumente N de linhas ou adote secao customizada."
+    )
+
+
+def avaliar_box_manual(
+    Q_projeto_m3_s: float,
+    b_m: float,
+    h_total_m: float,
+    S_m_per_m: float,
+    n: float,
+    fator_seguranca: float = 1.10,
+    lamina_max_ratio: float = 0.85,
+    n_linhas: int = 1,
+) -> DimensionamentoBoxComercial:
+    """Avalia uma secao (b, h) escolhida pelo usuario com N linhas."""
+    if n_linhas < 1:
+        raise ValueError(f"n_linhas deve ser >= 1, recebi {n_linhas}.")
+    Q_por_linha = Q_projeto_m3_s / n_linhas
+    h_limite = lamina_max_ratio * h_total_m
+
+    h_op = lamina_para_vazao_retangular(Q_por_linha, b_m, h_total_m, S_m_per_m, n)
+    op = manning_rectangular(b_m, h_op, S_m_per_m, n)
+    warnings = validar_velocidade(op.v_m_s)
+    if h_op > h_limite:
+        warnings.insert(
+            0,
+            f"Lamina de operacao {h_op * 100:.1f} cm excede o limite "
+            f"{h_limite * 100:.1f} cm ({lamina_max_ratio * 100:.0f}% de h). "
+            f"Aumente a secao, o N de linhas ou a declividade.",
+        )
+    return DimensionamentoBoxComercial(
+        b_m=b_m, h_total_m=h_total_m,
+        Q_projeto_m3_s=Q_projeto_m3_s,
+        Q_fator_seguranca_m3_s=Q_projeto_m3_s * fator_seguranca,
+        fator_seguranca=fator_seguranca,
+        lamina_max_permitida=h_limite,
+        operacao=op,
+        warnings=warnings,
     )
 
 

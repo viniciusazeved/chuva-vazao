@@ -359,14 +359,35 @@ def gerar_relatorio_pdf(inputs: RelatorioInputs) -> bytes:
         pdf.add_param("Fator de seguranca:", f"{dim.get('fator_seguranca', 1):.2f}")
         pdf.add_param("Q de projeto:", f"{dim.get('Q_projeto_m3_s', 0):.3f} m3/s")
 
+        n_linhas = int(dim.get("n_linhas", 1) or 1)
+        pdf.add_param("Modo:", str(dim.get("modo", "auto")).title())
+        pdf.add_param("Linhas em paralelo:", f"{n_linhas}")
+
         pdf.add_subsection("Secao adotada")
         if dim.get("tipo") == "circular":
-            pdf.add_param("  Diametro:", f"{dim.get('D_adotado_m', 0) * 100:.0f} cm")
+            D_mm = dim.get("D_adotado_m", 0) * 1000
+            arranjo = (
+                f"{n_linhas} manilhas Phi {D_mm:.0f} mm" if n_linhas > 1
+                else f"1 manilha Phi {D_mm:.0f} mm"
+            )
+            pdf.add_param("  Arranjo:", arranjo)
+            pdf.add_param("  Diametro:", f"{D_mm:.0f} mm")
         else:
+            arranjo = (
+                f"{n_linhas} celulas {dim.get('b_m', 0):.1f} x {dim.get('h_total_m', 0):.1f} m"
+                if n_linhas > 1
+                else f"1 celula {dim.get('b_m', 0):.1f} x {dim.get('h_total_m', 0):.1f} m"
+            )
+            pdf.add_param("  Arranjo:", arranjo)
             pdf.add_param("  Largura b:", f"{dim.get('b_m', 0):.2f} m")
             pdf.add_param("  Altura total h:", f"{dim.get('h_total_m', 0):.2f} m")
 
         pdf.add_subsection("Operacao real (Q projeto, sem fator de seguranca)")
+        pdf.add_param("  Q por linha:", f"{dim.get('Q_por_linha_m3_s', 0):.3f} m3/s")
+        pdf.add_param(
+            "  Q total (capacidade):",
+            f"{dim.get('Q_total_capacidade_m3_s', 0):.3f} m3/s",
+        )
         pdf.add_param("  Lamina de operacao:", f"{dim.get('h_op_m', 0):.3f} m")
         pdf.add_param("  Velocidade:", f"{dim.get('v_op_m_s', 0):.2f} m/s")
 
