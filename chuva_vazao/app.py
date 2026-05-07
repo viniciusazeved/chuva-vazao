@@ -73,6 +73,7 @@ def _default_state() -> None:
         "uso_solo_racional": None,
         "dimensionamento": None,
         "detencao": None,
+        "verificacao_secao": None,
     }
     for k, v in defaults.items():
         if k not in st.session_state:
@@ -93,9 +94,10 @@ pg = st.navigation([
     st.Page(str(pages_dir / "posto_idf.py"), title="1. Posto e IDF", icon=":material/location_on:"),
     st.Page(str(pages_dir / "hietograma.py"), title="2. Hietograma", icon=":material/rainy:"),
     st.Page(str(pages_dir / "hidrograma.py"), title="3. Chuva-Vazão", icon=":material/water_drop:"),
-    st.Page(str(pages_dir / "hidraulica.py"), title="4. Hidráulica", icon=":material/plumbing:"),
-    st.Page(str(pages_dir / "detencao.py"), title="5. Detenção", icon=":material/waves:"),
-    st.Page(str(pages_dir / "exportar.py"), title="6. Exportar", icon=":material/download:"),
+    st.Page(str(pages_dir / "secao.py"), title="4. Verificação de Seção", icon=":material/landscape:"),
+    st.Page(str(pages_dir / "hidraulica.py"), title="5. Hidráulica", icon=":material/plumbing:"),
+    st.Page(str(pages_dir / "detencao.py"), title="6. Detenção", icon=":material/waves:"),
+    st.Page(str(pages_dir / "exportar.py"), title="7. Exportar", icon=":material/download:"),
 ])
 
 with st.sidebar:
@@ -124,6 +126,8 @@ with st.sidebar:
     if st.session_state.get("hidrograma") is not None:
         metodo = st.session_state.get("metodo_chuva_vazao", "?")
         st.caption(f"Hidrograma calculado ({metodo}) ✓")
+    if st.session_state.get("verificacao_secao") is not None:
+        st.caption("Seção verificada ✓")
     if st.session_state.get("dimensionamento") is not None:
         st.caption("Hidráulica dimensionada ✓")
     if st.session_state.get("detencao") is not None:

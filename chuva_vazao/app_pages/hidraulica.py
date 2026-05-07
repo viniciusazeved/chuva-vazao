@@ -1,12 +1,13 @@
-"""Página 4: dimensionamento hidráulico via Manning."""
+"""Página 5: dimensionamento hidráulico via Manning."""
 from __future__ import annotations
 
 import streamlit as st
 
 from chuva_vazao import hidraulica as hd
+from chuva_vazao import plots
 
 
-st.title("4. Dimensionamento Hidráulico")
+st.title("5. Dimensionamento Hidráulico")
 st.caption(
     "Manning para galeria circular (manilha) ou retangular (celular). "
     "Suporta múltiplas linhas em paralelo, modo automático (menor seção comercial "
@@ -16,6 +17,7 @@ st.caption(
 hg = st.session_state.get("hidrograma")
 if hg is None:
     st.error("Gere o hidrograma na Página 3 antes.")
+
     st.stop()
 
 
@@ -134,6 +136,29 @@ if secao.startswith("Circular"):
     for w in dim.warnings:
         st.warning(w)
 
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.plotly_chart(
+            plots.plot_conduto_circular(
+                D_m=dim.D_adotado_m,
+                h_op_m=dim.operacao.h_m,
+                h_max_m=dim.lamina_max_permitida,
+                v_m_s=dim.operacao.v_m_s,
+            ),
+            use_container_width=True,
+        )
+    with col_b:
+        st.plotly_chart(
+            plots.plot_curva_caracteristica_circular(
+                D_m=dim.D_adotado_m,
+                S_m_per_m=S, n=n,
+                h_op_m=dim.operacao.h_m,
+                h_max_m=dim.lamina_max_permitida,
+                Q_op_m3_s=Q_por_linha,
+            ),
+            use_container_width=True,
+        )
+
     st.session_state.dimensionamento = {
         "tipo": "circular",
         "modo": modo.lower(),
@@ -238,6 +263,30 @@ else:
 
     for w in dim.warnings:
         st.warning(w)
+
+    col_a, col_b = st.columns(2)
+    with col_a:
+        st.plotly_chart(
+            plots.plot_conduto_retangular(
+                b_m=dim.b_m,
+                h_total_m=dim.h_total_m,
+                h_op_m=dim.operacao.h_m,
+                h_max_m=dim.lamina_max_permitida,
+                v_m_s=dim.operacao.v_m_s,
+            ),
+            use_container_width=True,
+        )
+    with col_b:
+        st.plotly_chart(
+            plots.plot_curva_caracteristica_retangular(
+                b_m=dim.b_m, h_total_m=dim.h_total_m,
+                S_m_per_m=S, n=n,
+                h_op_m=dim.operacao.h_m,
+                h_max_m=dim.lamina_max_permitida,
+                Q_op_m3_s=Q_por_linha,
+            ),
+            use_container_width=True,
+        )
 
     st.session_state.dimensionamento = {
         "tipo": "retangular",

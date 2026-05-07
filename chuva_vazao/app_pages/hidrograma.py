@@ -291,4 +291,7 @@ else:  # SCS-HU
         st.dataframe(hg_df.round(3), use_container_width=True)
 
 
-st.success("Chuva-vazão pronto. Prossiga para **4. Hidráulica** ou **5. Detenção**.")
+st.success(
+    "Chuva-vazão pronto. Prossiga para **4. Verificação de Seção**, "
+    "**5. Hidráulica** ou **6. Detenção**."
+)

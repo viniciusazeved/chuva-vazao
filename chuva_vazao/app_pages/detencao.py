@@ -1,4 +1,4 @@
-"""Página 5: reservatório de detenção via Puls modificado."""
+"""Página 6: reservatório de detenção via Puls modificado."""
 from __future__ import annotations
 
 import pandas as pd
@@ -9,7 +9,7 @@ from chuva_vazao import detencao as dt
 from chuva_vazao import plots
 
 
-st.title("5. Reservatório de Detenção")
+st.title("6. Reservatório de Detenção")
 st.caption(
     "Roteia o hidrograma afluente por Puls modificado em reservatório "
     "prismático com orifício de fundo + vertedor retangular de emergência."
@@ -81,9 +81,17 @@ col2.metric("Qp efluente", f"{resultado.Qp_out_m3_s:.2f} m³/s")
 col3.metric("Atenuação", f"{resultado.atenuacao_pct:.1f} %")
 col4.metric("h máx atingida", f"{resultado.h_max_m:.2f} m")
 
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 col1.metric("Volume armazenado máx", f"{resultado.volume_armazenado_max_m3:,.0f} m³")
 col2.metric("Extravasou?", "Sim ⚠️" if resultado.h_max_m >= h_max * 0.99 else "Não")
+borda_livre_m = max(h_max - resultado.h_max_m, 0.0)
+borda_livre_pct = 100.0 * borda_livre_m / h_max if h_max > 0 else 0.0
+col3.metric(
+    "Borda livre disponível",
+    f"{borda_livre_m:.2f} m",
+    delta=f"{borda_livre_pct:.0f} % de h_máx",
+    delta_color="off",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -133,6 +141,17 @@ fig2.update_layout(
     height=350,
 )
 st.plotly_chart(fig2, use_container_width=True)
+
+
+# Decomposicao da descarga no tempo
+fig3 = plots.plot_descarga_decomposta(resultado, res)
+st.plotly_chart(fig3, use_container_width=True)
+
+
+# Caracteristicas do reservatorio (curva cota x volume x descarga)
+st.subheader("Características do reservatório")
+fig4 = plots.plot_cota_volume_descarga(res)
+st.plotly_chart(fig4, use_container_width=True)
 
 
 with st.expander("Tabela do roteamento"):

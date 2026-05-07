@@ -1,4 +1,4 @@
-"""Página 4: exportar PDF técnico e CSVs dos resultados."""
+"""Página 7: exportar PDF técnico e CSVs dos resultados."""
 from __future__ import annotations
 
 from io import StringIO
@@ -9,7 +9,7 @@ from chuva_vazao import plots
 from chuva_vazao.report import RelatorioInputs, gerar_relatorio_pdf
 
 
-st.title("6. Exportar Resultados")
+st.title("7. Exportar Resultados")
 st.caption("Gere PDF técnico consolidado e baixe CSVs das tabelas.")
 
 
@@ -25,8 +25,9 @@ if missing:
     st.stop()
 
 opcional = {
-    "dimensionamento": "hidráulica (Página 4)",
-    "detencao": "detenção (Página 5)",
+    "verificacao_secao": "verificação de seção (Página 4)",
+    "dimensionamento": "hidráulica (Página 5)",
+    "detencao": "detenção (Página 6)",
 }
 opcional_feitos = [label for key, label in opcional.items() if st.session_state.get(key) is not None]
 if opcional_feitos:
