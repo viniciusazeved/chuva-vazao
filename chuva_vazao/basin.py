@@ -20,7 +20,11 @@ from __future__ import annotations
 
 import importlib.util
 import os
+import platform
+import shutil
 import tempfile
+import urllib.request
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -52,6 +56,72 @@ from shapely.geometry import Point
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DEM_CACHE = PROJECT_ROOT / "data" / "dems"
 OPENTOPO_URL = "https://portal.opentopography.org/API/globaldem"
+
+
+_WBT_LINKS = {
+    "Windows": "https://www.whiteboxgeo.com/WBT_Windows/WhiteboxTools_win_amd64.zip",
+    "Darwin": "https://www.whiteboxgeo.com/WBT_Darwin/WhiteboxTools_darwin_amd64.zip",
+    "Darwin-arm": "https://www.whiteboxgeo.com/WBT_Darwin/WhiteboxTools_darwin_m_series.zip",
+    "Linux": "https://www.whiteboxgeo.com/WBT_Linux/WhiteboxTools_linux_amd64.zip",
+}
+
+
+def _ensure_whitebox_binary() -> Path:
+    """
+    Garante o binario WhiteboxTools num diretorio gravavel e devolve o path
+    do dir que contem `whitebox_tools` (ou .exe). Default site-packages
+    nao e gravavel em Streamlit Cloud — daqui em diante usamos ~/.cache.
+    """
+    cache_root = Path(os.environ.get("WBT_CACHE_DIR", Path.home() / ".cache" / "whitebox"))
+    wbt_dir = cache_root / "WBT"
+    exe_name = "whitebox_tools.exe" if platform.system() == "Windows" else "whitebox_tools"
+    if (wbt_dir / exe_name).exists():
+        return wbt_dir
+
+    sysname = platform.system()
+    if sysname == "Darwin" and platform.processor() == "arm":
+        url = _WBT_LINKS["Darwin-arm"]
+    else:
+        url = _WBT_LINKS.get(sysname)
+    if not url:
+        raise RuntimeError(f"WhiteboxTools nao tem binario para {sysname}.")
+
+    cache_root.mkdir(parents=True, exist_ok=True)
+    zip_path = cache_root / Path(url).name
+    urllib.request.urlretrieve(url, zip_path)
+    with zipfile.ZipFile(zip_path) as zf:
+        zf.extractall(cache_root)
+    zip_path.unlink(missing_ok=True)
+
+    # ZIP extrai em <cache_root>/WhiteboxTools_<plat>/WBT/. Move WBT pra cache_root/WBT.
+    extracted = next(
+        (p for p in cache_root.iterdir() if p.is_dir() and (p / "WBT").exists()),
+        None,
+    )
+    if extracted:
+        if wbt_dir.exists():
+            shutil.rmtree(wbt_dir)
+        shutil.move(str(extracted / "WBT"), str(wbt_dir))
+        shutil.rmtree(extracted, ignore_errors=True)
+
+    if sysname != "Windows":
+        os.chmod(wbt_dir / exe_name, 0o755)
+        plugins_dir = wbt_dir / "plugins"
+        if plugins_dir.exists():
+            for p in plugins_dir.iterdir():
+                if p.is_file() and p.suffix != ".json":
+                    os.chmod(p, 0o755)
+    return wbt_dir
+
+
+def _new_whitebox_tools():
+    """Instancia WhiteboxTools com binario num path gravavel."""
+    wbt_dir = _ensure_whitebox_binary()
+    # Sinaliza pro download_wbt() do pacote pular o download em site-packages
+    os.environ["WBT_PATH"] = str(wbt_dir)
+    wbt = whitebox.WhiteboxTools()
+    wbt.set_whitebox_dir(str(wbt_dir))
+    return wbt
 
 
 def download_dem_gee(
@@ -287,7 +357,7 @@ def delineate_basin(
     )
 
     # 2. WBT setup
-    wbt = whitebox.WhiteboxTools()
+    wbt = _new_whitebox_tools()
     wbt.set_verbose_mode(False)
     wbt.set_working_dir(str(work_dir))
 
