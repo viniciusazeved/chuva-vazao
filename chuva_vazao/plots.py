@@ -551,10 +551,12 @@ def plot_curva_caracteristica_retangular(
 
 def plot_cota_volume_descarga(reservatorio) -> go.Figure:
     """
-    Caracteristicas do reservatorio: volume e vazao de saida em funcao de h.
+    Caracteristicas do reservatorio: volume e vazao de saida em funcao da cota.
 
-    Eixo y esquerdo: V(h) (m³). Eixo y direito: Q_saida(h) (m³/s) decomposta
-    em orificio, vertedor e total.
+    Eixo y esquerdo: V(z) (m³). Eixo y direito: Q_saida(z) (m³/s) decomposta
+    em orificio, vertedor e total. Se `z_fundo_m != 0`, o eixo x e em cota
+    absoluta no datum vertical do projeto; caso contrario, em altura relativa
+    ao fundo.
     """
     from chuva_vazao.detencao import (
         build_storage_discharge_table,
@@ -566,6 +568,15 @@ def plot_cota_volume_descarga(reservatorio) -> go.Figure:
     tabela = build_storage_discharge_table(reservatorio, n_pontos=200)
     h = tabela["h_m"].to_numpy()
     S = tabela["S_m3"].to_numpy()
+
+    z_fundo = reservatorio.z_fundo_m
+    absoluto = z_fundo != 0
+    x = h + z_fundo
+    eixo_label = (
+        f"Cota absoluta z (m) — datum: {reservatorio.datum_vertical or 'nao informado'}"
+        if absoluto else "Cota h relativa ao fundo (m)"
+    )
+    fmt_x = "z=%{x:.2f} m" if absoluto else "h=%{x:.2f} m"
 
     Q_orif = np.array([
         orificio(reservatorio.Cd_orificio, reservatorio.A_orificio_m2,
@@ -581,62 +592,63 @@ def plot_cota_volume_descarga(reservatorio) -> go.Figure:
 
     fig.add_trace(
         go.Scatter(
-            x=h, y=S,
+            x=x, y=S,
             mode="lines",
             line=dict(color="#2ca02c", width=2),
-            name="Volume V(h)",
-            hovertemplate="h=%{x:.2f} m<br>V=%{y:,.0f} m³<extra></extra>",
+            name="Volume V(z)",
+            hovertemplate=f"{fmt_x}<br>V=%{{y:,.0f}} m³<extra></extra>",
         ),
         secondary_y=False,
     )
 
     fig.add_trace(
         go.Scatter(
-            x=h, y=Q_orif,
+            x=x, y=Q_orif,
             mode="lines",
             line=dict(color="#1f77b4", width=2, dash="dot"),
             name="Q_orif",
-            hovertemplate="h=%{x:.2f} m<br>Q_orif=%{y:.2f} m³/s<extra></extra>",
+            hovertemplate=f"{fmt_x}<br>Q_orif=%{{y:.2f}} m³/s<extra></extra>",
         ),
         secondary_y=True,
     )
     fig.add_trace(
         go.Scatter(
-            x=h, y=Q_vert,
+            x=x, y=Q_vert,
             mode="lines",
             line=dict(color="#d62728", width=2, dash="dot"),
             name="Q_vert",
-            hovertemplate="h=%{x:.2f} m<br>Q_vert=%{y:.2f} m³/s<extra></extra>",
+            hovertemplate=f"{fmt_x}<br>Q_vert=%{{y:.2f}} m³/s<extra></extra>",
         ),
         secondary_y=True,
     )
     fig.add_trace(
         go.Scatter(
-            x=h, y=Q_total,
+            x=x, y=Q_total,
             mode="lines",
             line=dict(color="#ff7f0e", width=2.5),
             name="Q_total",
-            hovertemplate="h=%{x:.2f} m<br>Q_total=%{y:.2f} m³/s<extra></extra>",
+            hovertemplate=f"{fmt_x}<br>Q_total=%{{y:.2f}} m³/s<extra></extra>",
         ),
         secondary_y=True,
     )
 
-    # Marcacoes nas cotas dos dispositivos
+    z_vert = reservatorio.z_vertedor_m + z_fundo
+    z_orif = reservatorio.z_orificio_m + z_fundo
     fig.add_vline(
-        x=reservatorio.z_vertedor_m,
+        x=z_vert,
         line_dash="dash", line_color="#d62728",
-        annotation_text=f"vertedor @ {reservatorio.z_vertedor_m:.2f} m",
+        annotation_text=f"vertedor @ {z_vert:.2f} m",
         annotation_position="top left",
     )
     if reservatorio.z_orificio_m > 0:
         fig.add_vline(
-            x=reservatorio.z_orificio_m,
+            x=z_orif,
             line_dash="dash", line_color="#1f77b4",
-            annotation_text=f"orifício @ {reservatorio.z_orificio_m:.2f} m",
+            annotation_text=f"orifício @ {z_orif:.2f} m",
             annotation_position="bottom left",
         )
 
-    fig.update_xaxes(title_text="Cota h (m)")
+    fig.update_xaxes(title_text=eixo_label)
     fig.update_yaxes(title_text="Volume (m³)", secondary_y=False)
     fig.update_yaxes(title_text="Vazão de saída (m³/s)", secondary_y=True)
     fig.update_layout(
@@ -644,6 +656,50 @@ def plot_cota_volume_descarga(reservatorio) -> go.Figure:
         template="plotly_white",
         height=450,
         legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def plot_curva_cota_volume(
+    z_abs_m: np.ndarray,
+    V_m3: np.ndarray,
+    z_fundo_m: float | None = None,
+    datum: str = "",
+    titulo: str = "Curva cota × volume",
+) -> go.Figure:
+    """
+    Curva V × Z em cota absoluta (m no datum). Pontos sao destacados como
+    marcadores; entre pontos, interpolacao linear (mesmo modelo usado no
+    roteamento).
+    """
+    z = np.asarray(z_abs_m, dtype=float)
+    V = np.asarray(V_m3, dtype=float)
+
+    fig = go.Figure()
+    fig.add_trace(go.Scatter(
+        x=V, y=z,
+        mode="lines+markers",
+        marker=dict(size=8, color="#2ca02c"),
+        line=dict(color="#2ca02c", width=2),
+        name="V × Z",
+        hovertemplate="V=%{x:,.0f} m³<br>z=%{y:.2f} m<extra></extra>",
+    ))
+
+    if z_fundo_m is not None:
+        fig.add_hline(
+            y=z_fundo_m,
+            line_dash="dot", line_color="#6b4226",
+            annotation_text=f"fundo @ {z_fundo_m:.2f} m",
+            annotation_position="bottom right",
+        )
+
+    eixo = f"Cota z (m) — datum: {datum}" if datum else "Cota z (m)"
+    fig.update_layout(
+        title=titulo,
+        xaxis_title="Volume acumulado (m³)",
+        yaxis_title=eixo,
+        template="plotly_white",
+        height=400,
     )
     return fig
 

@@ -1,6 +1,7 @@
 """Página 6: reservatório de detenção via Puls modificado."""
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 import streamlit as st
@@ -11,8 +12,9 @@ from chuva_vazao import plots
 
 st.title("6. Reservatório de Detenção")
 st.caption(
-    "Roteia o hidrograma afluente por Puls modificado em reservatório "
-    "prismático com orifício de fundo + vertedor retangular de emergência."
+    "Roteia o hidrograma afluente por Puls modificado em reservatório com "
+    "orifício de fundo + vertedor retangular de emergência. Geometria "
+    "prismática ou via curva cota-volume tabulada."
 )
 
 hg = st.session_state.get("hidrograma")
@@ -22,45 +24,183 @@ if hg is None:
 
 
 # ---------------------------------------------------------------------------
-# Parametros do reservatorio
+# Datum vertical
+# ---------------------------------------------------------------------------
+
+st.subheader("Referencial geodésico")
+col_datum1, col_datum2 = st.columns([2, 1])
+with col_datum1:
+    datum_vertical = st.text_input(
+        "Datum vertical (rótulo de projeto)",
+        value="Imbituba (SGB) — IBGE",
+        help=(
+            "Apenas anotação para o relatório. SIRGAS 2000 é estritamente "
+            "datum horizontal — para cotas verticais oficiais use Imbituba "
+            "(SGB), SGB-S (nova realização IBGE) ou EGM2008 quando partir "
+            "de DEMs como Copernicus GLO-30."
+        ),
+    )
+with col_datum2:
+    z_fundo = st.number_input(
+        "Cota do fundo z₀ (m)",
+        min_value=-100.0, max_value=5000.0,
+        value=100.0, step=0.10,
+        help="Cota absoluta do fundo do reservatório no datum escolhido.",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Geometria — prismatico ou curva cota-volume
 # ---------------------------------------------------------------------------
 
 st.subheader("Geometria do reservatório")
-col1, col2 = st.columns(2)
-with col1:
-    Aw = st.number_input(
-        "Área superficial Aw (m²)",
-        min_value=10.0, max_value=1_000_000.0,
-        value=5000.0, step=100.0,
-        help="Prismático — área constante com a altura.",
-    )
-with col2:
-    h_max = st.number_input(
-        "Altura máxima h_max (m)", min_value=0.5, max_value=20.0,
-        value=4.0, step=0.1,
-    )
+modo = st.radio(
+    "Modo de definição",
+    ["Prismático (área constante)", "Curva cota × volume"],
+    horizontal=True,
+    help=(
+        "Prismático assume Aw constante e S(h)=Aw·h. Curva cota-volume "
+        "interpola V(z) linearmente entre pontos — modelo padrão para "
+        "reservatórios reais a partir de levantamento topográfico ou DEM."
+    ),
+)
 
+
+cota_vol_h: tuple[float, ...] = ()
+cota_vol_v: tuple[float, ...] = ()
+Aw = 0.0
+h_max = 0.0
+
+if modo == "Prismático (área constante)":
+    col1, col2 = st.columns(2)
+    with col1:
+        Aw = st.number_input(
+            "Área superficial Aw (m²)",
+            min_value=10.0, max_value=1_000_000.0,
+            value=5000.0, step=100.0,
+            help="Prismático — área constante com a altura.",
+        )
+    with col2:
+        h_max = st.number_input(
+            "Altura máxima h_max (m)", min_value=0.5, max_value=20.0,
+            value=4.0, step=0.1,
+            help=f"Cota absoluta do NA máx = {z_fundo + 4.0:.2f} m (referência).",
+        )
+    z_max_abs = z_fundo + h_max
+
+else:
+    st.caption(
+        "Edite a tabela abaixo. As cotas (z) são absolutas no datum; o "
+        "volume é acumulado da cota do fundo até z. A primeira linha deve "
+        "ser z = z_fundo com V = 0."
+    )
+    default_curva = pd.DataFrame({
+        "Cota z (m)": [z_fundo, z_fundo + 1.0, z_fundo + 2.0, z_fundo + 3.0, z_fundo + 4.0],
+        "Volume V (m³)": [0.0, 1500.0, 4000.0, 7500.0, 12000.0],
+    })
+    curva_df = st.data_editor(
+        default_curva,
+        num_rows="dynamic",
+        use_container_width=True,
+        column_config={
+            "Cota z (m)": st.column_config.NumberColumn(format="%.2f", step=0.1),
+            "Volume V (m³)": st.column_config.NumberColumn(format="%.1f", step=100.0),
+        },
+        key="curva_cota_volume_editor",
+    )
+    curva_df = curva_df.dropna().sort_values("Cota z (m)").reset_index(drop=True)
+
+    if len(curva_df) < 2:
+        st.error("A curva precisa de pelo menos 2 pontos.")
+        st.stop()
+
+    z_abs = curva_df["Cota z (m)"].to_numpy(dtype=float)
+    V = curva_df["Volume V (m³)"].to_numpy(dtype=float)
+
+    if z_abs[0] < z_fundo - 1e-6:
+        st.error(f"A menor cota da curva ({z_abs[0]:.2f} m) está abaixo do fundo (z₀={z_fundo:.2f} m).")
+        st.stop()
+    if not np.all(np.diff(z_abs) > 0):
+        st.error("As cotas precisam ser estritamente crescentes.")
+        st.stop()
+    if not np.all(np.diff(V) >= 0):
+        st.error("Volumes precisam ser monotonicamente não-decrescentes.")
+        st.stop()
+    if V[0] > 1e-3:
+        st.warning(
+            f"Primeira linha tem V = {V[0]:.0f} m³ ≠ 0. O modelo usa V[0] como volume "
+            "morto na cota inicial; geralmente queremos V = 0 em z = z_fundo."
+        )
+
+    h_rel = z_abs - z_fundo
+    cota_vol_h = tuple(h_rel.tolist())
+    cota_vol_v = tuple(V.tolist())
+    h_max = float(h_rel[-1])
+    z_max_abs = float(z_abs[-1])
+    Aw = float(V[-1] / h_max) if h_max > 0 else 1.0
+
+    fig_curva = plots.plot_curva_cota_volume(
+        z_abs_m=z_abs, V_m3=V,
+        z_fundo_m=z_fundo, datum=datum_vertical,
+    )
+    st.plotly_chart(fig_curva, use_container_width=True)
+
+
+st.info(f"NA máximo (z_máx) = **{z_max_abs:.2f} m** no datum.")
+
+
+# ---------------------------------------------------------------------------
+# Dispositivos de saida
+# ---------------------------------------------------------------------------
 
 st.subheader("Dispositivos de saída")
+st.caption("Cotas absolutas no datum vertical do projeto.")
+
 col1, col2 = st.columns(2)
 with col1:
     st.markdown("**Orifício de fundo**")
-    z_orif = st.number_input("Cota do orifício (m)", 0.0, float(h_max), 0.0, 0.1)
+    z_orif_abs = st.number_input(
+        "Cota do orifício (m)",
+        min_value=float(z_fundo),
+        max_value=float(z_max_abs),
+        value=float(z_fundo),
+        step=0.05,
+    )
     d_orif = st.number_input("Diâmetro do orifício (m)", 0.05, 3.0, 0.30, 0.05)
     Cd = st.number_input("Cd orifício", 0.4, 0.9, 0.61, 0.01)
 with col2:
     st.markdown("**Vertedor de emergência**")
-    z_vert = st.number_input("Cota do vertedor (m)", 0.0, float(h_max), float(h_max) * 0.75, 0.1)
+    z_vert_abs = st.number_input(
+        "Cota do vertedor (m)",
+        min_value=float(z_fundo),
+        max_value=float(z_max_abs),
+        value=float(z_fundo + 0.75 * h_max),
+        step=0.05,
+    )
     b_vert = st.number_input("Largura do vertedor (m)", 0.1, 50.0, 3.0, 0.1)
     Cw = st.number_input("Cw vertedor", 1.5, 2.2, 1.85, 0.05)
 
 
-res = dt.Reservatorio(
-    Aw_m2=Aw, h_max_m=h_max,
-    z_orificio_m=z_orif, d_orificio_m=d_orif,
-    z_vertedor_m=z_vert, b_vertedor_m=b_vert,
-    Cd_orificio=Cd, Cw_vertedor=Cw,
-)
+# Converte cotas absolutas em alturas relativas (a base do reservatorio na engine
+# continua sendo h relativa ao fundo).
+z_orif_rel = z_orif_abs - z_fundo
+z_vert_rel = z_vert_abs - z_fundo
+
+
+try:
+    res = dt.Reservatorio(
+        Aw_m2=Aw, h_max_m=h_max,
+        z_orificio_m=z_orif_rel, d_orificio_m=d_orif,
+        z_vertedor_m=z_vert_rel, b_vertedor_m=b_vert,
+        Cd_orificio=Cd, Cw_vertedor=Cw,
+        cota_volume_h_m=cota_vol_h,
+        cota_volume_v_m3=cota_vol_v,
+        z_fundo_m=z_fundo,
+        datum_vertical=datum_vertical,
+    )
+except ValueError as exc:
+    st.error(f"Erro na configuração do reservatório: {exc}")
+    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -79,7 +219,7 @@ col1, col2, col3, col4 = st.columns(4)
 col1.metric("Qp afluente", f"{resultado.Qp_in_m3_s:.2f} m³/s")
 col2.metric("Qp efluente", f"{resultado.Qp_out_m3_s:.2f} m³/s")
 col3.metric("Atenuação", f"{resultado.atenuacao_pct:.1f} %")
-col4.metric("h máx atingida", f"{resultado.h_max_m:.2f} m")
+col4.metric("NA máx atingido", f"{z_fundo + resultado.h_max_m:.2f} m")
 
 col1, col2, col3 = st.columns(3)
 col1.metric("Volume armazenado máx", f"{resultado.volume_armazenado_max_m3:,.0f} m³")
@@ -122,24 +262,29 @@ fig.update_layout(
 st.plotly_chart(fig, use_container_width=True)
 
 
-# Lamina no tempo
+# Lamina (NA absoluto) no tempo
 fig2 = go.Figure()
 fig2.add_trace(go.Scatter(
-    x=resultado.tempo_min, y=resultado.h_m,
+    x=resultado.tempo_min, y=resultado.h_m + z_fundo,
     mode="lines", line=dict(color="#2ca02c", width=2),
     fill="tozeroy", fillcolor="rgba(44,160,44,0.15)",
+    name="Nível d'água",
+    hovertemplate="t=%{x:.0f} min<br>z=%{y:.2f} m<extra></extra>",
 ))
-fig2.add_hline(y=z_vert, line_dash="dash", line_color="#d62728",
-               annotation_text=f"vertedor @ {z_vert:.2f} m")
-fig2.add_hline(y=h_max, line_dash="dot", line_color="black",
-               annotation_text=f"h_max = {h_max:.2f} m")
+fig2.add_hline(y=z_vert_abs, line_dash="dash", line_color="#d62728",
+               annotation_text=f"vertedor @ {z_vert_abs:.2f} m")
+fig2.add_hline(y=z_max_abs, line_dash="dot", line_color="black",
+               annotation_text=f"NA máx = {z_max_abs:.2f} m")
+fig2.add_hline(y=z_fundo, line_dash="dot", line_color="#6b4226",
+               annotation_text=f"fundo @ {z_fundo:.2f} m")
 fig2.update_layout(
-    title="Lâmina do reservatório",
+    title=f"Nível d'água (datum: {datum_vertical or 'não informado'})",
     xaxis_title="Tempo (min)",
-    yaxis_title="h (m)",
+    yaxis_title="Cota absoluta z (m)",
     template="plotly_white",
     height=350,
 )
+fig2.update_yaxes(range=[z_fundo - 0.1, z_max_abs + 0.2])
 st.plotly_chart(fig2, use_container_width=True)
 
 
@@ -155,4 +300,6 @@ st.plotly_chart(fig4, use_container_width=True)
 
 
 with st.expander("Tabela do roteamento"):
-    st.dataframe(resultado.to_dataframe().round(3), use_container_width=True)
+    df_show = resultado.to_dataframe().copy()
+    df_show["z_abs_m"] = df_show["h_m"] + z_fundo
+    st.dataframe(df_show.round(3), use_container_width=True)

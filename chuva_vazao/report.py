@@ -402,9 +402,11 @@ def gerar_relatorio_pdf(inputs: RelatorioInputs) -> bytes:
         pdf.add_page()
         pdf.add_section("10. Reservatorio de Detencao (roteamento Puls)")
         pdf.add_text(
-            "Roteamento pelo metodo de Puls modificado em reservatorio "
-            "prismatico com orificio de fundo + vertedor retangular de "
-            "emergencia. Atenuacao = 1 - Qp_out / Qp_in."
+            "Roteamento pelo metodo de Puls modificado em reservatorio com "
+            "orificio de fundo + vertedor retangular de emergencia. Geometria "
+            "prismatica (S=Aw*h) ou via curva cota-volume tabulada (interpolacao "
+            "linear de V(z), com z em cota absoluta no datum vertical do projeto). "
+            "Atenuacao = 1 - Qp_out / Qp_in."
         )
         det = inputs.detencao
         pdf.add_param("Qp afluente:", f"{det.Qp_in_m3_s:.2f} m3/s")

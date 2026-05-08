@@ -1,6 +1,13 @@
 """
 Reservatorio de detencao: curvas S(h), O(h) e roteamento por Puls modificado.
 
+Geometria do reservatorio em dois modos:
+- Prismatico: S(h) = Aw * h.
+- Curva cota-volume: tabela (Z, V) com cotas absolutas referidas a um datum
+  vertical (Imbituba/SGB-S, EGM2008, local arbitrario, etc.). Internamente
+  o roteamento continua trabalhando com h = z - z_fundo (altura relativa ao
+  fundo); a interpolacao V(h) e linear sobre os pontos da curva.
+
 Dispositivos combinados:
 - Orificio de fundo: Q = Cd * A * sqrt(2 * g * h_eff),  h_eff = max(h - z_orificio, 0)
 - Vertedor retangular de borda delgada: Q = Cw * b * h_over_weir^(3/2)
@@ -17,7 +24,7 @@ Referencias:
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Iterable
 
 import numpy as np
@@ -57,23 +64,73 @@ def vertedor_retangular(Cw: float, b_m: float, h_over_weir_m: float) -> float:
 
 @dataclass(frozen=True)
 class Reservatorio:
-    """Reservatorio prismatico com orificio de fundo + vertedor retangular."""
-    Aw_m2: float                # area superficial (prismatico)
-    h_max_m: float              # lamina maxima (topo do vertedor + borda livre)
-    z_orificio_m: float         # cota do orificio (ref: fundo)
-    d_orificio_m: float         # diametro do orificio
-    z_vertedor_m: float         # cota do vertedor
-    b_vertedor_m: float         # largura do vertedor
+    """
+    Reservatorio com orificio de fundo + vertedor retangular.
+
+    Geometria em dois modos, mutuamente exclusivos:
+    - **Prismatico**: usa `Aw_m2`. S(h) = Aw * h.
+    - **Curva cota-volume**: passe `cota_volume_h_m` e `cota_volume_v_m3` (em
+      altura relativa ao fundo, ja convertida do absoluto pelo chamador). A
+      interpolacao V(h) e linear; fora do intervalo extrapola pelos extremos.
+
+    Cotas internas (`z_orificio_m`, `z_vertedor_m`, `h_max_m`) sao **alturas
+    relativas ao fundo**. O campo opcional `z_fundo_m` guarda a cota absoluta
+    do fundo (no datum escolhido) e e usado apenas pela UI/relatorio.
+    """
+    Aw_m2: float                         # area superficial prismatica (ignorada se curva tabulada)
+    h_max_m: float                       # lamina maxima (topo do vertedor + borda livre), relativa ao fundo
+    z_orificio_m: float                  # cota do orificio (relativa ao fundo)
+    d_orificio_m: float                  # diametro do orificio
+    z_vertedor_m: float                  # cota do vertedor (relativa ao fundo)
+    b_vertedor_m: float                  # largura do vertedor
     Cd_orificio: float = 0.61
     Cw_vertedor: float = 1.85
+
+    # Curva cota-volume (opcional). Se ambos definidos, sobrescreve o modo prismatico.
+    cota_volume_h_m: tuple[float, ...] = field(default_factory=tuple)
+    cota_volume_v_m3: tuple[float, ...] = field(default_factory=tuple)
+
+    # Anotacao geodesica (nao afeta calculo).
+    z_fundo_m: float = 0.0
+    datum_vertical: str = ""
+
+    def __post_init__(self) -> None:
+        if bool(self.cota_volume_h_m) != bool(self.cota_volume_v_m3):
+            raise ValueError("cota_volume_h_m e cota_volume_v_m3 devem ser ambos definidos ou ambos vazios.")
+        if self.cota_volume_h_m:
+            h = np.asarray(self.cota_volume_h_m, dtype=float)
+            v = np.asarray(self.cota_volume_v_m3, dtype=float)
+            if len(h) < 2:
+                raise ValueError("Curva cota-volume precisa de pelo menos 2 pontos.")
+            if not np.all(np.diff(h) > 0):
+                raise ValueError("Cotas (h relativas) da curva devem ser estritamente crescentes.")
+            if not np.all(np.diff(v) >= 0):
+                raise ValueError("Volumes da curva devem ser monotonicamente nao-decrescentes.")
+            if v[0] < 0:
+                raise ValueError("Volume inicial da curva nao pode ser negativo.")
+
+    @property
+    def usa_curva_tabulada(self) -> bool:
+        return bool(self.cota_volume_h_m)
 
     @property
     def A_orificio_m2(self) -> float:
         return np.pi * self.d_orificio_m ** 2 / 4.0
 
+    @property
+    def z_max_abs_m(self) -> float:
+        """Cota absoluta do nivel maximo (datum vertical do projeto)."""
+        return self.z_fundo_m + self.h_max_m
+
     def volume(self, h_m: float) -> float:
-        """S(h) = Aw * h (prismatico)."""
-        return self.Aw_m2 * max(h_m, 0.0)
+        """
+        S(h). Prismatico: Aw * h. Curva: interpolacao linear em (h, V).
+        Fora do intervalo, satura nos extremos da curva.
+        """
+        h = max(h_m, 0.0)
+        if self.usa_curva_tabulada:
+            return float(np.interp(h, self.cota_volume_h_m, self.cota_volume_v_m3))
+        return self.Aw_m2 * h
 
     def vazao_saida(self, h_m: float) -> float:
         """O(h) = Q_orif(h) + Q_vert(h)."""
