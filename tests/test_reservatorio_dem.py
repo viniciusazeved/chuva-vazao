@@ -212,6 +212,65 @@ def test_piso_automatico_zera_volume_no_fundo(tmp_path: Path):
     assert res.volumes_m3[-1] > 0
 
 
+def test_bacia_polygon_restringe_flood_fill(tmp_path: Path):
+    """
+    Bug-fix: quando o DEM nao tem nodata definido, rio_mask preenche fora-do-
+    poligono com 0, e o flood-fill antigo alagava esses pixels. Com o sentinel
+    explicito, pixels fora da bacia precisam ser totalmente ignorados.
+    """
+    n = 121
+    pixel = 10.0
+    epsg = 32723
+    ox, oy = 500_000.0, 7_500_000.0
+    transform = from_origin(ox, oy, pixel, pixel)
+    cc, rr = np.meshgrid(np.arange(n), np.arange(n))
+    xs = ox + (cc + 0.5) * pixel
+    ys = oy - (rr + 0.5) * pixel
+    xc = ox + (n / 2.0) * pixel
+    yc = oy - (n / 2.0) * pixel
+    z = (100.0 + 0.05 * (yc - ys) + 0.001 * (xs - xc) ** 2).astype(np.float32)
+    dem = tmp_path / "dem_sem_nodata.tif"
+    # Sem nodata definido — reproduz o caso do Copernicus GLO-30.
+    with rasterio.open(
+        dem, "w", driver="GTiff",
+        height=n, width=n, count=1, dtype="float32",
+        crs=f"EPSG:{epsg}", transform=transform,
+    ) as dst:
+        dst.write(z, 1)
+
+    lon_c, lat_c = _utm_to_lonlat(xc, yc, epsg)
+
+    # Bacia pequena = quadrado de ~200 m em torno do centro
+    half_m = 100.0
+    bacia_corners_utm = [
+        (xc - half_m, yc - half_m),
+        (xc + half_m, yc - half_m),
+        (xc + half_m, yc + half_m),
+        (xc - half_m, yc + half_m),
+        (xc - half_m, yc - half_m),
+    ]
+    from rasterio.warp import transform as warp_transform
+    xs_b = [c[0] for c in bacia_corners_utm]
+    ys_b = [c[1] for c in bacia_corners_utm]
+    lon_b, lat_b = warp_transform(f"EPSG:{epsg}", "EPSG:4326", xs_b, ys_b)
+    bacia_geom = {
+        "type": "Polygon",
+        "coordinates": [list(zip(lon_b, lat_b))],
+    }
+
+    res = gerar_curva_cota_volume_dem(
+        lat=lat_c, lon=lon_c, dem_path=dem,
+        bacia_polygon_4326=bacia_geom,
+        delta_h_max_m=10.0, n_pontos=5,
+    )
+    # Bacia tem ~200 x 200 m = 40_000 m² de area maxima.
+    # Espelho NAO pode exceder a area da bacia.
+    assert res.areas_m2[-1] <= 40_000 * 1.05, (
+        f"Espelho ({res.areas_m2[-1]:.0f} m²) excedeu a area da bacia "
+        "(40 000 m²) — flood-fill vazou pra fora do poligono."
+    )
+
+
 def test_mancha_geojson_valida(tmp_path: Path):
     """A mancha deve ser GeoJSON FeatureCollection nao-vazia em EPSG:4326."""
     import json

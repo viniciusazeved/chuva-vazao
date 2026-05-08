@@ -157,7 +157,16 @@ def gerar_curva_cota_volume_dem(
         if not utm_path.exists():
             _reproject_to_utm(dem_path, utm_path, dst_crs)
 
+    # Sentinela explicito para "fora da bacia" — independente do nodata do DEM
+    # (Copernicus GLO-30 normalmente vem sem nodata definido; sem sentinela o
+    # rio_mask preenche fora-do-poligono com 0, e o flood-fill por cota acaba
+    # alagando todos esses pixels como se estivessem submersos).
+    OUT_OF_BASIN = -1.0e9
+
     with rasterio.open(utm_path) as src:
+        src_nodata = src.nodata
+        crs_out = src.crs.to_string()
+
         if bacia_polygon_4326 is not None:
             geom_dict = (
                 mapping(bacia_polygon_4326)
@@ -165,14 +174,15 @@ def gerar_curva_cota_volume_dem(
                 else bacia_polygon_4326
             )
             geom_utm = _reproject_geojson(geom_dict, "EPSG:4326", dst_crs)
-            arr, transform = rio_mask(src, [geom_utm], crop=True, filled=True, nodata=src.nodata)
+            arr, transform = rio_mask(
+                src, [geom_utm], crop=True, filled=True, nodata=OUT_OF_BASIN,
+            )
             arr = arr[0]
+            outside_basin = arr == OUT_OF_BASIN
         else:
             arr = src.read(1)
             transform = src.transform
-
-        nodata = src.nodata
-        crs_out = src.crs.to_string()
+            outside_basin = np.zeros(arr.shape, dtype=bool)
 
     px_w = abs(transform.a)
     px_h = abs(transform.e)
@@ -189,17 +199,17 @@ def gerar_curva_cota_volume_dem(
             f"row={row}, col={col}, shape={arr.shape}."
         )
 
-    # Mascara de validos (so nodata).
+    # Mascara de validos: dentro da bacia E nao-nodata do DEM.
     arr_f = arr.astype(np.float64, copy=False)
-    if nodata is not None:
-        valid = arr_f != nodata
-    else:
-        valid = np.isfinite(arr_f)
+    valid = ~outside_basin & np.isfinite(arr_f)
+    if src_nodata is not None:
+        valid &= arr_f != src_nodata
 
     if not valid[row, col]:
         raise ValueError(
-            f"Pixel da barragem (row={row}, col={col}) e nodata. "
-            "Reescolha o ponto."
+            f"Pixel da barragem (row={row}, col={col}) esta fora da bacia "
+            "ou e nodata do DEM. Verifique se o ponto esta dentro do "
+            "poligono da bacia delineada na pagina 0."
         )
 
     # Piso do reservatorio = cota do pixel da barragem (modelo "leito plano"
