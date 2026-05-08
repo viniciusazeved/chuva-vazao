@@ -1,6 +1,9 @@
 """Página 6: reservatório de detenção via Puls modificado."""
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
@@ -56,12 +59,17 @@ with col_datum2:
 st.subheader("Geometria do reservatório")
 modo = st.radio(
     "Modo de definição",
-    ["Prismático (área constante)", "Curva cota × volume"],
-    horizontal=True,
+    [
+        "Prismático (área constante)",
+        "Curva cota × volume (manual / drone)",
+        "Gerar do DEM (in-line, GEE)",
+    ],
+    horizontal=False,
     help=(
-        "Prismático assume Aw constante e S(h)=Aw·h. Curva cota-volume "
-        "interpola V(z) linearmente entre pontos — modelo padrão para "
-        "reservatórios reais a partir de levantamento topográfico ou DEM."
+        "Prismático assume Aw constante. Manual: você cola pontos (z, V) "
+        "vindos de levantamento topográfico ou voo de drone. DEM in-line: "
+        "clica no ponto da barragem e o app faz flood-fill na bacia da "
+        "página 0 para gerar a curva e a mancha de inundação."
     ),
 )
 
@@ -70,6 +78,8 @@ cota_vol_h: tuple[float, ...] = ()
 cota_vol_v: tuple[float, ...] = ()
 Aw = 0.0
 h_max = 0.0
+mancha_geojson_4326: str | None = None
+ponto_barragem: tuple[float, float] | None = None
 
 if modo == "Prismático (área constante)":
     col1, col2 = st.columns(2)
@@ -88,11 +98,11 @@ if modo == "Prismático (área constante)":
         )
     z_max_abs = z_fundo + h_max
 
-else:
+elif modo == "Curva cota × volume (manual / drone)":
     st.caption(
         "Edite a tabela abaixo. As cotas (z) são absolutas no datum; o "
         "volume é acumulado da cota do fundo até z. A primeira linha deve "
-        "ser z = z_fundo com V = 0."
+        "ser z = z_fundo com V = 0. Útil pra colar saída de drone/topografia."
     )
     default_curva = pd.DataFrame({
         "Cota z (m)": [z_fundo, z_fundo + 1.0, z_fundo + 2.0, z_fundo + 3.0, z_fundo + 4.0],
@@ -144,6 +154,198 @@ else:
         z_fundo_m=z_fundo, datum=datum_vertical,
     )
     st.plotly_chart(fig_curva, use_container_width=True)
+
+else:  # "Gerar do DEM (in-line, GEE)"
+    st.caption(
+        "Reaproveita a bacia delineada na **Página 0** + DEM Copernicus GLO-30 "
+        "para flood-fill por cota. Útil pra prospecção de CGH e detenção em "
+        "lote vazio. Eixo do barramento é assumido vertical no ponto."
+    )
+
+    bres = st.session_state.get("basin_result")
+    dem_path_session = st.session_state.get("_dem_path")
+
+    if bres is None or dem_path_session is None:
+        st.error(
+            "Vá à **Página 0** primeiro: baixe um DEM e delineie a bacia de "
+            "contribuição. Esta opção depende dos dois."
+        )
+        st.stop()
+
+    import folium
+    from streamlit_folium import st_folium
+
+    from chuva_vazao import reservatorio_dem as rd
+
+    bacia_fc = json.loads(bres["basin_geojson"])
+    # Polygon da bacia em EPSG:4326 (geopandas .to_json gera FeatureCollection)
+    bacia_geom = bacia_fc["features"][0]["geometry"]
+    outlet_lon, outlet_lat = bres["outlet_snapped"]
+
+    # Estado: ponto da barragem (default = exutorio)
+    if "_barragem_ponto" not in st.session_state:
+        st.session_state["_barragem_ponto"] = (outlet_lat, outlet_lon)
+    bar_lat, bar_lon = st.session_state["_barragem_ponto"]
+
+    col_map, col_ctrl = st.columns([3, 1])
+    with col_ctrl:
+        bar_lat = st.number_input("Lat barragem", -90.0, 90.0, float(bar_lat), 0.0001, format="%.6f")
+        bar_lon = st.number_input("Lon barragem", -180.0, 180.0, float(bar_lon), 0.0001, format="%.6f")
+        delta_h_max = st.number_input(
+            "Altura máx do barramento Δh (m)",
+            0.5, 100.0, 10.0, 0.5,
+            help="Cota máx do NA = z_pixel_da_barragem + Δh.",
+        )
+        n_pontos = st.number_input("Nº de pontos da curva", 5, 60, 20, 1)
+        usar_clip = st.checkbox(
+            "Lago existente — definir piso do leito", value=False,
+            help="Se já há reservatório no ponto, o DEM mostra a lâmina d'água, não o leito real. Use o piso pra clipar.",
+        )
+        z_min_clip = (
+            st.number_input("Piso do leito z_min (m)", -100.0, 5000.0, float(z_fundo), 0.1)
+            if usar_clip else None
+        )
+        gerar_btn = st.button("Gerar curva", type="primary")
+
+    with col_map:
+        m = folium.Map(location=[outlet_lat, outlet_lon], zoom_start=13)
+        folium.TileLayer(
+            tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
+            attr="Esri", name="Satélite",
+        ).add_to(m)
+        folium.GeoJson(
+            bacia_fc, name="Bacia",
+            style_function=lambda _: {"color": "#ff7f0e", "weight": 2, "fillOpacity": 0.15},
+        ).add_to(m)
+        folium.Marker(
+            [outlet_lat, outlet_lon], tooltip="Exutório (snapped)",
+            icon=folium.Icon(color="red", icon="water", prefix="fa"),
+        ).add_to(m)
+        folium.Marker(
+            [bar_lat, bar_lon], tooltip="Barragem (in-line)",
+            icon=folium.Icon(color="darkblue", icon="dam", prefix="fa"),
+        ).add_to(m)
+
+        cv = st.session_state.get("_curva_dem")
+        if cv is not None:
+            folium.GeoJson(
+                cv["mancha_geojson"], name="Mancha (z_máx)",
+                style_function=lambda _: {"color": "#1f77b4", "weight": 1, "fillOpacity": 0.45, "fillColor": "#1f77b4"},
+            ).add_to(m)
+        folium.LayerControl(collapsed=True).add_to(m)
+
+        click = st_folium(m, height=420, returned_objects=["last_clicked"], key="mapa_barragem")
+        if click and click.get("last_clicked"):
+            st.session_state["_barragem_ponto"] = (
+                click["last_clicked"]["lat"], click["last_clicked"]["lng"],
+            )
+            st.rerun()
+
+    if gerar_btn:
+        with st.spinner("Flood-fill por cota no DEM..."):
+            try:
+                cv = rd.gerar_curva_cota_volume_dem(
+                    lat=bar_lat, lon=bar_lon,
+                    dem_path=Path(dem_path_session),
+                    bacia_polygon_4326=bacia_geom,
+                    delta_h_max_m=float(delta_h_max),
+                    n_pontos=int(n_pontos),
+                    z_min_clip_m=z_min_clip,
+                )
+            except Exception as exc:
+                st.error(f"Falhou: {exc}")
+                st.stop()
+        st.session_state["_curva_dem"] = {
+            "cotas_m": cv.cotas_m.tolist(),
+            "volumes_m3": cv.volumes_m3.tolist(),
+            "areas_m2": cv.areas_m2.tolist(),
+            "z_fundo_m": cv.z_fundo_m,
+            "mancha_geojson": cv.mancha_geojson,
+            "pixel_size_m": cv.pixel_size_m,
+            "n_pixels_z_max": cv.n_pixels_z_max,
+        }
+        st.rerun()
+
+    cv = st.session_state.get("_curva_dem")
+    if cv is None:
+        st.info("Clique no mapa para reposicionar a barragem (default = exutório) e clique **Gerar curva**.")
+        st.stop()
+
+    z_abs = np.asarray(cv["cotas_m"])
+    V = np.asarray(cv["volumes_m3"])
+    A = np.asarray(cv["areas_m2"])
+    z_fundo_dem = float(cv["z_fundo_m"])
+
+    # Aviso técnico
+    area_max = float(A[-1])
+    pixel = float(cv["pixel_size_m"])
+    n_pix = int(cv["n_pixels_z_max"])
+    if n_pix < 50:
+        st.warning(
+            f"Espelho na cota máx: **{area_max:,.0f} m²** ({n_pix} pixels de "
+            f"{pixel:.1f} m). Resolução do DEM é grosseira para este reservatório — "
+            "considere drone."
+        )
+    else:
+        st.success(
+            f"Curva gerada: {len(z_abs)} pontos. Espelho z_máx = "
+            f"{area_max / 1e4:.2f} ha ({n_pix} pixels)."
+        )
+
+    # Override do z_fundo: se o DEM achou um fundo diferente do que o usuario
+    # tinha posto, sincroniza e avisa
+    if abs(z_fundo_dem - z_fundo) > 0.5:
+        st.info(
+            f"DEM informa fundo no ponto = **{z_fundo_dem:.2f} m**. "
+            f"Sobrescrevendo o valor manual ({z_fundo:.2f} m) para coerência."
+        )
+        z_fundo = z_fundo_dem
+
+    # Popula a curva
+    h_rel = z_abs - z_fundo
+    cota_vol_h = tuple(h_rel.tolist())
+    cota_vol_v = tuple(V.tolist())
+    h_max = float(h_rel[-1])
+    z_max_abs = float(z_abs[-1])
+    Aw = float(V[-1] / h_max) if h_max > 0 else 1.0
+    mancha_geojson_4326 = cv["mancha_geojson"]
+    ponto_barragem = (bar_lat, bar_lon)
+
+    # Plots: curva V x Z e A x Z
+    col_a, col_b = st.columns(2)
+    with col_a:
+        fig_vz = plots.plot_curva_cota_volume(
+            z_abs_m=z_abs, V_m3=V,
+            z_fundo_m=z_fundo, datum=datum_vertical,
+        )
+        st.plotly_chart(fig_vz, use_container_width=True)
+    with col_b:
+        fig_az = go.Figure()
+        fig_az.add_trace(go.Scatter(
+            x=A, y=z_abs,
+            mode="lines+markers",
+            line=dict(color="#1f77b4", width=2),
+            marker=dict(size=8),
+            hovertemplate="A=%{x:,.0f} m²<br>z=%{y:.2f} m<extra></extra>",
+        ))
+        fig_az.update_layout(
+            title="Área do espelho × Cota",
+            xaxis_title="Área inundada (m²)",
+            yaxis_title=f"Cota z (m) — {datum_vertical or 'datum'}",
+            template="plotly_white",
+            height=400,
+        )
+        st.plotly_chart(fig_az, use_container_width=True)
+
+    with st.expander("Tabela cota / área / volume"):
+        st.dataframe(
+            pd.DataFrame({
+                "Cota z (m)": z_abs.round(2),
+                "Área (m²)": A.round(0),
+                "Volume (m³)": V.round(0),
+            }),
+            use_container_width=True,
+        )
 
 
 st.info(f"NA máximo (z_máx) = **{z_max_abs:.2f} m** no datum.")
