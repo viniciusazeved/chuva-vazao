@@ -187,7 +187,7 @@ else:  # "Gerar do DEM (in-line, GEE)"
         st.session_state["_barragem_ponto"] = (outlet_lat, outlet_lon)
     bar_lat, bar_lon = st.session_state["_barragem_ponto"]
 
-    col_map, col_ctrl = st.columns([3, 1])
+    col_map, col_ctrl = st.columns([4, 1])
     with col_ctrl:
         bar_lat = st.number_input("Lat barragem", -90.0, 90.0, float(bar_lat), 0.0001, format="%.6f")
         bar_lon = st.number_input("Lon barragem", -180.0, 180.0, float(bar_lon), 0.0001, format="%.6f")
@@ -234,7 +234,11 @@ else:  # "Gerar do DEM (in-line, GEE)"
             ).add_to(m)
         folium.LayerControl(collapsed=True).add_to(m)
 
-        click = st_folium(m, height=420, returned_objects=["last_clicked"], key="mapa_barragem")
+        click = st_folium(
+            m, height=600, width=None,
+            returned_objects=["last_clicked"], key="mapa_barragem",
+            use_container_width=True,
+        )
         if click and click.get("last_clicked"):
             st.session_state["_barragem_ponto"] = (
                 click["last_clicked"]["lat"], click["last_clicked"]["lng"],
