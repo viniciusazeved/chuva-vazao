@@ -418,6 +418,7 @@ dt_min = float(hg.index[1] - hg.index[0]) if len(hg) > 1 else 1.0
 
 resultado = dt.puls_routing(inflow, dt_min=dt_min, reservatorio=res)
 st.session_state.detencao = resultado
+st.session_state.detencao_reservatorio = res
 
 
 st.subheader("Resultado")

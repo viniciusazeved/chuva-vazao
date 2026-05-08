@@ -24,3 +24,4 @@ out/
 # Secrets
 .streamlit/secrets.toml
 .env
+data/_smoke_pdf/
