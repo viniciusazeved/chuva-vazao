@@ -145,11 +145,12 @@ class RelatorioPDF(FPDF):
         self.set_margins(MARGIN_LR, MARGIN_TOP, MARGIN_LR)
         self.set_auto_page_break(auto=True, margin=MARGIN_BOT)
         self._section_counter = 0
-        self._on_cover = True
 
     # ---- Header / footer -------------------------------------------------
+    # A capa e sempre a pag. 1 e renderiza seu proprio rodape (LAPLA + creditos);
+    # header/footer padrao so entram a partir da pag. 2.
     def header(self):
-        if self._on_cover:
+        if self.page_no() == 1:
             return
         self.set_font("Helvetica", "", 8)
         self.set_text_color(*COLOR_MUTED)
@@ -167,7 +168,7 @@ class RelatorioPDF(FPDF):
         self.set_text_color(*COLOR_TEXT)
 
     def footer(self):
-        if self._on_cover:
+        if self.page_no() == 1:
             return
         self.set_y(-12)
         self.set_font("Helvetica", "I", 7)
@@ -301,11 +302,21 @@ class RelatorioPDF(FPDF):
 
     # ---- Cover -----------------------------------------------------------
     def add_cover(self, modulos_label: str):
-        self._on_cover = True
         self.add_page()
         self.set_text_color(*COLOR_TEXT)
 
-        self.ln(40)
+        # Logo LAPLA centralizado no topo (identidade visual)
+        logo_path = Path(__file__).parent / "assets" / "logo_lapla.png"
+        if logo_path.exists():
+            logo_w = 32
+            logo_h = logo_w / 0.923  # ~34.7mm (proporcao do PNG: 710x769)
+            x = (PAGE_W - logo_w) / 2
+            y_logo = 22
+            self.image(str(logo_path), x=x, y=y_logo, w=logo_w)
+            self.set_y(y_logo + logo_h + 8)
+        else:
+            self.ln(40)
+
         self.set_font("Helvetica", "B", 10)
         self.set_text_color(*COLOR_ACCENT)
         self.cell(0, 6, "RELATORIO TECNICO", align="C", new_x="LMARGIN", new_y="NEXT")
@@ -330,22 +341,32 @@ class RelatorioPDF(FPDF):
         # Bloco de info-chave em "card" leve
         self._cover_card(modulos_label)
 
-        # Rodape da capa
+        # Rodape da capa (sem auto_page_break pra nao quebrar pra pag.2)
+        self.set_auto_page_break(auto=False)
         self.set_y(-30)
-        self.set_font("Helvetica", "I", 8)
-        self.set_text_color(*COLOR_MUTED)
+        self.set_font("Helvetica", "B", 9)
+        self.set_text_color(*COLOR_PRIMARY)
         self.cell(
             0, 5,
-            "Gerado por chuva_vazao  ·  base de dados HidroFlu (UFRJ/COPPE)",
+            _latin1_safe("LAPLA — Laboratorio de Planejamento Ambiental"),
             align="C", new_x="LMARGIN", new_y="NEXT",
         )
+        self.set_font("Helvetica", "", 8)
+        self.set_text_color(*COLOR_MUTED)
+        self.cell(
+            0, 5, "FECFAU / Unicamp",
+            align="C", new_x="LMARGIN", new_y="NEXT",
+        )
+        self.set_font("Helvetica", "I", 8)
         self.cell(
             0, 5,
-            f"Emitido em {date.today().strftime('%d/%m/%Y')}",
+            _latin1_safe(
+                "Gerado por chuva_vazao  ·  base HidroFlu (UFRJ/COPPE)  ·  "
+                f"emitido em {date.today().strftime('%d/%m/%Y')}"
+            ),
             align="C",
         )
-
-        self._on_cover = False
+        self.set_auto_page_break(auto=True, margin=MARGIN_BOT)
 
     def _cover_card(self, modulos_label: str):
         x0 = 35

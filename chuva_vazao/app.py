@@ -100,8 +100,12 @@ pg = st.navigation([
     st.Page(str(pages_dir / "exportar.py"), title="7. Exportar", icon=":material/download:"),
 ])
 
+_LOGO_LAPLA = Path(__file__).parent / "assets" / "logo_lapla.png"
+
 with st.sidebar:
-    st.markdown("### chuva_vazao")
+    if _LOGO_LAPLA.exists():
+        st.image(str(_LOGO_LAPLA), use_container_width=True)
+    st.title("chuva_vazao")
     st.caption(
         "Pipeline chuva → vazão para drenagem urbana, "
         "a partir do banco HidroFlu v2.0 (UFRJ/COPPE)."
@@ -135,8 +139,10 @@ with st.sidebar:
 
     st.divider()
     st.caption(
-        "[IDF-generator](https://idf-generator.streamlit.app) — app irmã para "
-        "ajuste estatístico de IDF a partir de dados ANA."
+        "**LAPLA** — Laboratório de Planejamento Ambiental\n\n"
+        "FECFAU / Unicamp\n\n"
+        "[Repositório](https://github.com/viniciusazeved/chuva-vazao) · "
+        "[IDF-generator](https://idf-generator.streamlit.app) (app irmã)"
     )
 
 pg.run()
