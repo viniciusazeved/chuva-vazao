@@ -1,26 +1,22 @@
-"""Testes da equacao IDF e suas duas convencoes."""
+"""Testes da equacao IDF (convencao i = K * TR^a / (t + b)^c)."""
 from __future__ import annotations
 
 import pytest
 
-from chuva_vazao import db, idf
+from chuva_vazao import idf
 
 
-def test_intensidade_santa_cruz_tr10_60min_plausivel():
-    """
-    Santa Cruz RJ, TR=10, duracao=60min -> intensidade tipica brasileira
-    de 50-70 mm/h para chuva de 1h TR=10.
-    """
-    coef = db.get_idf_coef("Santa Cruz")
-    params = idf.params_from_convention(coef.K, coef.a, coef.b, coef.c)
+def test_intensidade_typical_brazil_tr10_60min():
+    """Coeficientes tipicos do RJ -> i para 60min/TR10 fica em 50-70 mm/h."""
+    # K=711.3, a=0.186, b=7 (cte min), c=0.687 (exp duracao) -> Bangu RJ
+    params = idf.params_from_kabc(K=711.3, a=0.186, b=7.0, c=0.687)
     i = params.intensidade(TR=10, duracao_min=60)
     assert 50 <= i <= 70
 
 
 def test_tabela_monotona():
     """Intensidade deve decrescer com a duracao e crescer com o TR."""
-    coef = db.get_idf_coef("Santa Cruz")
-    params = idf.params_from_convention(coef.K, coef.a, coef.b, coef.c)
+    params = idf.params_from_kabc(K=711.3, a=0.186, b=7.0, c=0.687)
     tabela = idf.calcular_idf(params, duracoes_min=[5, 15, 60, 720], TRs=[2, 10, 100])
 
     # Decrescente em duracao (para cada TR)
@@ -29,16 +25,6 @@ def test_tabela_monotona():
     # Crescente em TR (para cada duracao)
     for t in tabela.index:
         assert (tabela.loc[t].diff().dropna() > 0).all()
-
-
-def test_convencao_hidroflu_vs_idf_generator_dao_resultados_distintos():
-    """Mesmos (K,a,b,c) com convencoes distintas -> valores diferentes."""
-    K, a, b, c = 711.3, 0.186, 0.687, 7.0
-    p_hf = idf.params_from_convention(K, a, b, c, convention="hidroflu")
-    p_idf = idf.params_from_convention(K, a, b, c, convention="idf_generator")
-    i_hf = p_hf.intensidade(TR=10, duracao_min=60)
-    i_idf = p_idf.intensidade(TR=10, duracao_min=60)
-    assert i_hf != pytest.approx(i_idf, rel=1e-6)
 
 
 def test_altura_igual_intensidade_vezes_tempo():
@@ -54,3 +40,12 @@ def test_tabela_idf_dimensoes():
     tabela = idf.calcular_idf(params, duracoes_min=[5, 15, 60], TRs=[2, 10, 100])
     assert tabela.shape == (3, 3)
     assert list(tabela.columns) == [2, 10, 100]
+
+
+def test_params_from_kabc_mapping():
+    """params_from_kabc(K,a,b,c): b vai pra constante e c vai pra expoente."""
+    p = idf.params_from_kabc(K=1000.0, a=0.18, b=10.0, c=0.75)
+    assert p.K == 1000.0
+    assert p.expoente_tr == 0.18
+    assert p.constante_duracao == 10.0
+    assert p.expoente_duracao == 0.75

@@ -1,7 +1,7 @@
 [project]
 name = "chuva-vazao"
 version = "0.1.0"
-description = "Pipeline chuva-vazao: IDF regional -> hietograma -> hidrograma a partir do banco HidroFlu"
+description = "Pipeline Chuva - Vazao: IDF -> hietograma -> hidrograma -> dimensionamento -> detencao"
 requires-python = ">=3.12"
 dependencies = [
     "earthengine-api>=1.7.22",
@@ -22,10 +22,6 @@ dependencies = [
     "streamlit>=1.40",
     "streamlit-folium>=0.27",
     "whitebox>=2.3",
-    # Windows-only (necessarias so pra extract_mdb.py em dev local).
-    # Streamlit Cloud roda Linux e falha se estiverem no requirements principal.
-    "pyodbc>=5.0; sys_platform == 'win32'",
-    "pywin32>=311; sys_platform == 'win32'",
 ]
 
 [tool.pytest.ini_options]

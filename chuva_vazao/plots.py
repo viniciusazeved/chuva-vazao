@@ -985,21 +985,3 @@ def plot_perfil_longitudinal(verificacao) -> go.Figure:
     return fig
 
 
-def plot_cobertura_estados(contagem: pd.DataFrame) -> go.Figure:
-    """Barras horizontal de numero de postos por UF."""
-    fig = go.Figure()
-    fig.add_trace(go.Bar(
-        x=contagem["n"],
-        y=contagem["estado"],
-        orientation="h",
-        marker_color=_COLORS[2],
-    ))
-    fig.update_layout(
-        title="Cobertura HidroFlu por Estado",
-        xaxis_title="Numero de postos",
-        yaxis_title="UF",
-        template="plotly_white",
-        height=max(300, 20 * len(contagem)),
-        yaxis=dict(categoryorder="total ascending"),
-    )
-    return fig

@@ -174,7 +174,8 @@ class RelatorioPDF(FPDF):
         self.set_font("Helvetica", "I", 7)
         self.set_text_color(*COLOR_MUTED)
         self.cell(
-            0, 5, "Gerado por chuva_vazao  -  base de dados HidroFlu (UFRJ/COPPE)",
+            0, 5,
+            _latin1_safe("Gerado por Chuva - Vazão  ·  LAPLA — FECFAU/Unicamp"),
             align="C",
         )
         self.set_text_color(*COLOR_TEXT)
@@ -361,8 +362,7 @@ class RelatorioPDF(FPDF):
         self.cell(
             0, 5,
             _latin1_safe(
-                "Gerado por chuva_vazao  ·  base HidroFlu (UFRJ/COPPE)  ·  "
-                f"emitido em {date.today().strftime('%d/%m/%Y')}"
+                f"Gerado por Chuva - Vazão  ·  emitido em {date.today().strftime('%d/%m/%Y')}"
             ),
             align="C",
         )
@@ -422,12 +422,12 @@ _MODULO_NOMES = {
 def _titulo_capa(modulos: list[str]) -> tuple[str, str]:
     """(titulo, subtitulo) adaptado aos modulos selecionados."""
     if not modulos:
-        return ("Relatorio chuva_vazao", "")
+        return ("Relatório Chuva - Vazão", "")
     if len(modulos) == 1:
         return (_MODULO_NOMES[modulos[0]], "")
     if set(modulos) == {"hidrologia"}:
-        return ("Hidrologia de Projeto", "Pipeline chuva-vazao para drenagem")
-    return ("Pipeline chuva-vazao", "Drenagem urbana, rural e infraestrutura hidraulica")
+        return ("Hidrologia de Projeto", "Pipeline Chuva - Vazão para drenagem")
+    return ("Pipeline Chuva - Vazão", "Drenagem urbana, fluvial e infraestrutura hidráulica")
 
 
 # ---------------------------------------------------------------------------
@@ -483,7 +483,7 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_page()
     pdf.add_section("Equacao IDF")
     pdf.add_text(
-        "Equacao Intensidade-Duracao-Frequencia (convencao HidroFlu):\n\n"
+        "Equacao Intensidade-Duracao-Frequencia (convencao do catalogo embutido):\n\n"
         "    i = K * TR^a / (t + c)^b\n\n"
         "i (mm/h), TR (anos), t (min), K/a/b/c — coeficientes do posto."
     )
@@ -562,8 +562,9 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_section("Metodologia")
     pdf.add_subsection("IDF")
     pdf.add_text(
-        "Coeficientes K, a, b, c oriundos do banco HidroFlu. Convencao: "
-        "b = expoente da duracao, c = constante temporal em minutos."
+        "Coeficientes K, a, b, c oriundos do catalogo embutido de postos "
+        "pluviometricos. Convencao: b = expoente da duracao, c = constante "
+        "temporal em minutos."
     )
     pdf.add_subsection("Hietograma")
     pdf.add_text(
@@ -815,7 +816,6 @@ _REFS_HIDROLOGIA = [
     ("Pfafstetter, O. (1957). Chuvas Intensas no Brasil. Rio de Janeiro: DNOS."),
     ("CETESB. (1980). Drenagem Urbana - Manual de Projeto. Sao Paulo: CETESB."),
     ("NRCS (1972). National Engineering Handbook, Section 4: Hydrology. USDA."),
-    ("UFRJ/COPPE. (2007). HidroFlu v2.0 - software de hidrologia para drenagem."),
 ]
 _REFS_DETENCAO = [
     ("DAEE-SP. Manual de Calculo para Reservatorios de Detencao."),

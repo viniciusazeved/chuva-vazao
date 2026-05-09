@@ -5,20 +5,17 @@ __pycache__/
 .pytest_cache/
 .ruff_cache/
 
-# uv.lock nao versionado — contem pywin32 Windows-only que quebra
-# build no Streamlit Cloud (Linux). Reproducibilidade via pyproject.toml
-# + requirements.txt.
+# uv.lock nao versionado — reprodutibilidade via pyproject.toml + requirements.txt.
 uv.lock
 
-# Dados brutos nao redistribuidos (MDB original, caches GEE)
-data/mdb_origem.mdb
+# Caches locais (DEMs, tiles GEE) e dados brutos
 data/dems/
 data/gee_cache/
+data/chuvavazao.db
+data/mdb_origem.mdb
+data/_smoke_pdf/
 
-# SQLite extraido EH redistribuido como referencia (HidroFlu v2.0 freeware)
-# entao nao ignoramos data/chuvavazao.db.
-
-# Saidas de scripts de demo
+# Saidas de relatorios e exports
 out/
 
 # Secrets

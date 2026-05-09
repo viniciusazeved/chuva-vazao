@@ -35,7 +35,7 @@ except Exception:
 
 
 st.set_page_config(
-    page_title="chuva_vazao",
+    page_title="Chuva - Vazão",
     page_icon=":cloud_with_rain:",
     layout="wide",
 )
@@ -93,7 +93,7 @@ pg = st.navigation([
     st.Page(str(pages_dir / "bacia.py"), title="0. Bacia", icon=":material/terrain:"),
     st.Page(str(pages_dir / "posto_idf.py"), title="1. Posto e IDF", icon=":material/location_on:"),
     st.Page(str(pages_dir / "hietograma.py"), title="2. Hietograma", icon=":material/rainy:"),
-    st.Page(str(pages_dir / "hidrograma.py"), title="3. Chuva-Vazão", icon=":material/water_drop:"),
+    st.Page(str(pages_dir / "hidrograma.py"), title="3. Chuva - Vazão", icon=":material/water_drop:"),
     st.Page(str(pages_dir / "secao.py"), title="4. Verificação de Seção", icon=":material/landscape:"),
     st.Page(str(pages_dir / "hidraulica.py"), title="5. Hidráulica", icon=":material/plumbing:"),
     st.Page(str(pages_dir / "detencao.py"), title="6. Detenção", icon=":material/waves:"),
@@ -105,10 +105,18 @@ _LOGO_LAPLA = Path(__file__).parent / "assets" / "logo_lapla.png"
 with st.sidebar:
     if _LOGO_LAPLA.exists():
         st.image(str(_LOGO_LAPLA), use_container_width=True)
-    st.title("chuva_vazao")
-    st.caption(
-        "Pipeline chuva → vazão para drenagem urbana, "
-        "a partir do banco HidroFlu v2.0 (UFRJ/COPPE)."
+    st.markdown(
+        "<h1 style='text-align:center; margin:-12px 0 4px 0; "
+        "font-size:1.7rem; font-weight:700; letter-spacing:-0.5px;'>"
+        "Chuva - Vazão</h1>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p style='text-align:center; margin:0 0 12px 0; "
+        "font-size:0.85rem; color:#5a6772;'>"
+        "Pipeline chuva → vazão para drenagem urbana, fluvial e infraestrutura."
+        "</p>",
+        unsafe_allow_html=True,
     )
     st.divider()
 

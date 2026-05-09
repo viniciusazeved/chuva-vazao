@@ -1,31 +1,18 @@
 """
 Calculo de intensidades IDF a partir de coeficientes regionais.
 
-Duas convencoes suportadas:
-
-- "hidroflu" (default): i = K * TR^a / (t + c)^b
-  Convencao do banco HidroFlu v2.0: b e o expoente da duracao e c e a constante
-  temporal em minutos. Valida empiricamente contra os 8 postos IDF do RJ (K ~ 700-1500,
-  a ~ 0.15-0.19, b ~ 0.66-0.80, c ~ 7-25).
-
-- "idf_generator": i = K * TR^a / (t + b)^c
-  Convencao usada no IDF-generator (D:/Projetos/IDF/idf.py:_idf_equation): aqui
-  b e a constante e c e o expoente. Permite consumir CSVs exportados por aquela app.
-
-A funcao `calcular_idf` recebe coeficientes nomeados explicitamente (K, expoente_tr,
-expoente_duracao, constante_duracao) para eliminar ambiguidade. Adapters para as
-convencoes classicas estao abaixo.
+Convencao adotada: i = K * TR^a / (t + b)^c
+  (mesma do IDF-generator: b e a constante temporal em min e c e o expoente
+  da duracao). A funcao `calcular_idf` recebe coeficientes nomeados explicitamente
+  (K, expoente_tr, expoente_duracao, constante_duracao) para eliminar ambiguidade.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Iterable, Literal
+from typing import Iterable
 
 import numpy as np
 import pandas as pd
-
-
-Convention = Literal["hidroflu", "idf_generator"]
 
 
 @dataclass(frozen=True)
@@ -38,32 +25,18 @@ class IDFParams:
     fonte: str = ""
 
     def intensidade(self, TR: float, duracao_min: float) -> float:
-        """i = K * TR^a / (t + c)^b onde a=expoente_tr, b=expoente_duracao, c=constante."""
+        """i = K * TR^a / (t + b)^c."""
         return self.K * (TR ** self.expoente_tr) / (
             (duracao_min + self.constante_duracao) ** self.expoente_duracao
         )
 
 
-def _from_hidroflu(K: float, a: float, b: float, c: float) -> IDFParams:
-    """HidroFlu: a=expoente TR, b=expoente duracao, c=constante duracao."""
-    return IDFParams(K=K, expoente_tr=a, expoente_duracao=b, constante_duracao=c)
+def params_from_kabc(K: float, a: float, b: float, c: float) -> IDFParams:
+    """Cria IDFParams a partir de (K, a, b, c) na convencao i = K*TR^a/(t+b)^c.
 
-
-def _from_idf_generator(K: float, a: float, b: float, c: float) -> IDFParams:
-    """IDF-generator: a=expoente TR, b=constante duracao, c=expoente duracao."""
+    a=expoente TR, b=constante duracao (min), c=expoente duracao.
+    """
     return IDFParams(K=K, expoente_tr=a, expoente_duracao=c, constante_duracao=b)
-
-
-def params_from_convention(
-    K: float, a: float, b: float, c: float,
-    convention: Convention = "hidroflu",
-) -> IDFParams:
-    """Cria IDFParams a partir de (K, a, b, c) na convencao indicada."""
-    if convention == "hidroflu":
-        return _from_hidroflu(K, a, b, c)
-    if convention == "idf_generator":
-        return _from_idf_generator(K, a, b, c)
-    raise ValueError(f"convencao invalida: {convention!r}")
 
 
 def calcular_idf(
@@ -138,7 +111,7 @@ def params_from_idf_generator_txt(content: str) -> IDFParams:
             raise ValueError(f"Nao achei '{chave} = <numero>' no arquivo.")
         return float(m.group(1))
 
-    return _from_idf_generator(grab("K"), grab("a"), grab("b"), grab("c"))
+    return params_from_kabc(grab("K"), grab("a"), grab("b"), grab("c"))
 
 
 def params_from_idf_generator_csv(path_or_content: str) -> IDFParams:
@@ -170,7 +143,7 @@ def params_from_idf_generator_csv(path_or_content: str) -> IDFParams:
         a = float(row[lower["a"]])
         b = float(row[lower["b"]])
         c = float(row[lower["c"]])
-        return _from_idf_generator(K, a, b, c)
+        return params_from_kabc(K, a, b, c)
 
     # Formato 2: tabela (duracao, TR1, TR2, ...)
     return _fit_params_from_table(df)
@@ -222,7 +195,7 @@ def _fit_params_from_table(df: pd.DataFrame) -> IDFParams:
         tr, dur = X
         return K * (tr ** a) / ((dur + b) ** c)
 
-    # Chute inicial em faixa tipica (HidroFlu RJ: K~1000, a~0.17, b~10, c~0.75)
+    # Chute inicial em faixa tipica (postos RJ: K~1000, a~0.17, b~10, c~0.75)
     p0 = [1000.0, 0.17, 10.0, 0.75]
     bounds = ([1.0, 0.05, 0.0, 0.3], [1e5, 1.0, 120.0, 1.5])
     try:
