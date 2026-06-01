@@ -49,7 +49,12 @@ import rasterio
 import requests
 import whitebox
 from rasterio.mask import mask as rio_mask
-from rasterio.warp import Resampling, calculate_default_transform, reproject
+from rasterio.warp import (
+    Resampling,
+    calculate_default_transform,
+    reproject,
+    transform as warp_transform,
+)
 from shapely.geometry import Point
 
 
@@ -351,6 +356,20 @@ def delineate_basin(
 
     epsg_utm = utm_epsg_for(lat, lon)
 
+    # 0. Validar que o exutorio cai dentro do DEM. Erro classico: baixar o DEM
+    # (recortado no exutorio anterior) e so depois mover/clicar o exutorio para
+    # fora dessa area — o snap nao acha canal e a bacia sai vazia.
+    with rasterio.open(dem_path) as _src:
+        _xs, _ys = warp_transform("EPSG:4326", _src.crs, [lon], [lat])
+        _px, _py = _xs[0], _ys[0]
+        _b = _src.bounds
+        if not (_b.left <= _px <= _b.right and _b.bottom <= _py <= _b.top):
+            raise RuntimeError(
+                "Exutorio fora da area coberta pelo DEM. Marque o exutorio no "
+                "mapa PRIMEIRO e baixe o DEM depois — o DEM e recortado ao "
+                "redor do exutorio. Alternativa: aumente o buffer do DEM."
+            )
+
     # 1. Reprojetar DEM
     dem_utm = reproject_dem_to_utm(
         Path(dem_path), lat, lon, out_path=work_dir / "dem_utm.tif",
@@ -358,26 +377,70 @@ def delineate_basin(
 
     # 2. WBT setup
     wbt = _new_whitebox_tools()
-    wbt.set_verbose_mode(False)
+    # Verbose ligado para o callback capturar mensagens de erro do binario;
+    # filtramos as linhas de progresso (%) no proprio callback.
+    wbt.set_verbose_mode(True)
     wbt.set_working_dir(str(work_dir))
+
+    _wbt_log: list[str] = []
+
+    def _cb(msg: object) -> None:
+        s = str(msg).strip()
+        # Descarta linhas de progresso ("Progress: 42%") e vazias.
+        if s and "%" not in s:
+            _wbt_log.append(s)
+
+    def _run(label: str, fn, *, out: str | Path | None = None, **kwargs):
+        """
+        Executa uma ferramenta WBT, captura a saida e falha cedo com mensagem
+        util. Sem isso, uma etapa que quebra no meio do pipeline so estoura la
+        no `gpd.read_file` final com um generico "No such file or directory".
+        """
+        _wbt_log.clear()
+        try:
+            ret = fn(callback=_cb, **kwargs)
+        except Exception as exc:
+            tail = "\n".join(_wbt_log[-15:])
+            raise RuntimeError(
+                f"WhiteboxTools falhou na etapa '{label}': {exc}"
+                + (f"\nSaida WBT:\n{tail}" if tail else "")
+            ) from exc
+        if ret is not None and ret != 0:
+            tail = "\n".join(_wbt_log[-15:])
+            raise RuntimeError(
+                f"WhiteboxTools retornou codigo {ret} na etapa '{label}'."
+                + (f"\nSaida WBT:\n{tail}" if tail else "")
+            )
+        if out is not None:
+            out_abs = out if Path(out).is_absolute() else work_dir / out
+            if not Path(out_abs).exists():
+                tail = "\n".join(_wbt_log[-15:])
+                raise RuntimeError(
+                    f"WhiteboxTools nao gerou '{Path(out).name}' na etapa "
+                    f"'{label}'. Etapa anterior pode ter produzido raster vazio."
+                    + (f"\nSaida WBT:\n{tail}" if tail else "")
+                )
+        return ret
 
     # 3. Breach depressions
     breached = "dem_breached.tif"
-    wbt.breach_depressions(dem=str(dem_utm), output=breached)
+    _run("breach_depressions", wbt.breach_depressions,
+         out=breached, dem=str(dem_utm), output=breached)
 
     # 4. D8 pointer
     d8_ptr = "d8_ptr.tif"
-    wbt.d8_pointer(dem=breached, output=d8_ptr)
+    _run("d8_pointer", wbt.d8_pointer, out=d8_ptr, dem=breached, output=d8_ptr)
 
     # 5. D8 flow accumulation
     d8_acc = "d8_acc.tif"
-    wbt.d8_flow_accumulation(i=d8_ptr, output=d8_acc, pntr=True)
+    _run("d8_flow_accumulation", wbt.d8_flow_accumulation,
+         out=d8_acc, i=d8_ptr, output=d8_acc, pntr=True)
 
     # 6. Extract streams
     streams = "streams.tif"
-    wbt.extract_streams(
-        flow_accum=d8_acc, output=streams, threshold=stream_threshold,
-    )
+    _run("extract_streams", wbt.extract_streams,
+         out=streams, flow_accum=d8_acc, output=streams,
+         threshold=stream_threshold)
 
     # 7. Outlet shapefile em UTM
     outlet_4326 = gpd.GeoDataFrame(
@@ -389,30 +452,27 @@ def delineate_basin(
 
     # 8. Snap
     outlet_snapped_shp = work_dir / "outlet_snapped.shp"
-    wbt.jenson_snap_pour_points(
-        pour_pts=str(outlet_shp),
-        streams=streams,
-        output=str(outlet_snapped_shp),
-        snap_dist=snap_dist_m,
-    )
+    _run("jenson_snap_pour_points", wbt.jenson_snap_pour_points,
+         out=outlet_snapped_shp,
+         pour_pts=str(outlet_shp), streams=streams,
+         output=str(outlet_snapped_shp), snap_dist=snap_dist_m)
 
     # 9. Watershed
     basin_rst = "basin.tif"
-    wbt.watershed(
-        d8_pntr=d8_ptr,
-        pour_pts=str(outlet_snapped_shp),
-        output=basin_rst,
-    )
+    _run("watershed", wbt.watershed,
+         out=basin_rst, d8_pntr=d8_ptr,
+         pour_pts=str(outlet_snapped_shp), output=basin_rst)
 
     # 10. Vetorizar bacia
     basin_shp_rel = "basin.shp"
-    wbt.raster_to_vector_polygons(i=basin_rst, output=basin_shp_rel)
+    _run("raster_to_vector_polygons", wbt.raster_to_vector_polygons,
+         out=basin_shp_rel, i=basin_rst, output=basin_shp_rel)
 
     # 11. Vetorizar rede de drenagem
     streams_shp_rel = "streams.shp"
-    wbt.raster_streams_to_vector(
-        streams=streams, d8_pntr=d8_ptr, output=streams_shp_rel,
-    )
+    _run("raster_streams_to_vector", wbt.raster_streams_to_vector,
+         out=streams_shp_rel, streams=streams, d8_pntr=d8_ptr,
+         output=streams_shp_rel)
 
     # 12. Caminho mais longo (canal principal, do topo da bacia ate o exutorio)
     longest_shp_rel = "longest_flowpath.shp"
@@ -437,6 +497,12 @@ def delineate_basin(
     basin_gdf_utm = gpd.read_file(work_dir / basin_shp_rel)
     if basin_gdf_utm.crs is None:
         basin_gdf_utm.set_crs(epsg=epsg_utm, inplace=True)
+    if len(basin_gdf_utm) == 0 or basin_gdf_utm.geometry.is_empty.all():
+        raise RuntimeError(
+            "Bacia delineada ficou vazia. O exutorio provavelmente nao foi "
+            "ajustado a nenhum canal — aumente o 'Snap (m)' ou reduza o "
+            "'Threshold canal (celulas)' para uma rede de drenagem mais densa."
+        )
     stream_gdf_utm = gpd.read_file(work_dir / streams_shp_rel)
     if stream_gdf_utm.crs is None:
         stream_gdf_utm.set_crs(epsg=epsg_utm, inplace=True)

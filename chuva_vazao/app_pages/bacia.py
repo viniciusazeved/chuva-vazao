@@ -27,6 +27,13 @@ default_lat = float(st.session_state.get("exutorio_lat", -22.68))
 default_lon = float(st.session_state.get("exutorio_lon", -44.32))
 
 st.subheader("Fonte do DEM")
+st.info(
+    "Ordem importa: marque o exutório no mapa **primeiro** (clique ou ajuste "
+    "Lat/Lon abaixo) e só então baixe o DEM. O recorte do DEM é centrado no "
+    "exutório atual — baixar antes deixa o raster na região errada e o "
+    "delineamento falha.",
+    icon="⚠️",
+)
 fonte_dem = st.radio(
     "Origem dos dados topográficos:",
     [

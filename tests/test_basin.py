@@ -101,6 +101,19 @@ def test_delineate_basin_retorna_resultado_valido(synthetic_dem, synthetic_outle
     assert dist_deg < 0.01
 
 
+def test_delineate_exutorio_fora_do_dem_lanca(synthetic_dem):
+    """Exutorio fora dos bounds do DEM deve falhar cedo com mensagem clara.
+
+    Reproduz o erro de ordem: baixar o DEM e so depois marcar o exutorio numa
+    regiao nao coberta pelo recorte.
+    """
+    with pytest.raises(RuntimeError, match="fora da area"):
+        basin.delineate_basin(
+            lat=-23.5, lon=-45.0, dem_path=synthetic_dem,
+            snap_dist_m=500, stream_threshold=20,
+        )
+
+
 def test_basin_metrics_summary_dict(synthetic_dem, synthetic_outlet):
     """summary_dict deve retornar todas as chaves esperadas."""
     lat, lon = synthetic_outlet
