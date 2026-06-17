@@ -26,6 +26,7 @@ from pathlib import Path
 import ee  # type: ignore
 import requests
 from shapely.geometry import Polygon, box, mapping, shape
+from shapely.geometry.base import BaseGeometry
 
 
 DEFAULT_PROJECT = os.environ.get("GEE_PROJECT", "ggeantigravity")
@@ -100,9 +101,17 @@ def bbox_from_point(lat: float, lon: float, buffer_deg: float = 0.1) -> Polygon:
     return box(lon - buffer_deg, lat - buffer_deg, lon + buffer_deg, lat + buffer_deg)
 
 
-def _to_ee_geometry(geom: Polygon | dict) -> ee.Geometry:
-    """Aceita shapely Polygon ou GeoJSON dict. Devolve ee.Geometry em EPSG:4326."""
-    if isinstance(geom, Polygon):
+def _to_ee_geometry(geom: BaseGeometry | dict) -> ee.Geometry:
+    """
+    Aceita qualquer geometria shapely (Polygon, MultiPolygon, ...) ou GeoJSON
+    dict. Devolve ee.Geometry em EPSG:4326.
+
+    Bacias delineadas frequentemente saem como MultiPolygon (fragmentos
+    desconexos da vetorizacao do raster de watershed), entao nao restringimos
+    a Polygon — `mapping()` serializa qualquer geometria pro GeoJSON que o
+    ee.Geometry entende.
+    """
+    if isinstance(geom, BaseGeometry):
         return ee.Geometry(mapping(geom))
     if isinstance(geom, dict):
         return ee.Geometry(geom)
@@ -121,9 +130,9 @@ def _is_cache_valid(path: Path, min_pixels: int = 4) -> bool:
         return False
 
 
-def _cache_path(kind: str, geom: Polygon | dict, extra: str = "") -> Path:
+def _cache_path(kind: str, geom: BaseGeometry | dict, extra: str = "") -> Path:
     """Path deterministico para cachear resultados por geometria + produto."""
-    geom_dict = mapping(geom) if isinstance(geom, Polygon) else geom
+    geom_dict = mapping(geom) if isinstance(geom, BaseGeometry) else geom
     centroid = shape(geom_dict).centroid
     h = hashlib.md5(
         f"{kind}_{extra}_{geom_dict}".encode(),
@@ -195,7 +204,7 @@ def _download_ee_image(
 # ---------------------------------------------------------------------------
 
 def fetch_dem_copernicus(
-    geom: Polygon | dict,
+    geom: BaseGeometry | dict,
     out_path: Path | None = None,
     scale_m: int = 30,
     use_cache: bool = True,
@@ -243,7 +252,7 @@ MAPBIOMAS_C9_ASSET = (
 
 
 def fetch_mapbiomas(
-    geom: Polygon | dict,
+    geom: BaseGeometry | dict,
     ano: int = 2023,
     out_path: Path | None = None,
     scale_m: int = 30,
@@ -274,7 +283,7 @@ DW_ASSET = "GOOGLE/DYNAMICWORLD/V1"
 
 
 def fetch_dynamic_world(
-    geom: Polygon | dict,
+    geom: BaseGeometry | dict,
     ano: int = 2024,
     out_path: Path | None = None,
     scale_m: int = 10,
@@ -318,7 +327,7 @@ class SoilTexturePaths:
 
 
 def fetch_soilgrids_texture(
-    geom: Polygon | dict,
+    geom: BaseGeometry | dict,
     out_dir: Path | None = None,
     scale_m: int = 30,
     use_cache: bool = True,

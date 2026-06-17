@@ -27,6 +27,7 @@ import rasterio
 from rasterio.mask import mask as rio_mask
 from rasterio.warp import Resampling, reproject
 from shapely.geometry import Polygon, mapping, shape
+from shapely.geometry.base import BaseGeometry
 
 from chuva_vazao import gee_client
 
@@ -217,7 +218,7 @@ class LanduseResult:
 # Leitura de raster mascarado pela bacia
 # ---------------------------------------------------------------------------
 
-def _read_raster_masked(raster_path: Path, geom: Polygon) -> tuple[np.ndarray, float]:
+def _read_raster_masked(raster_path: Path, geom: BaseGeometry) -> tuple[np.ndarray, float]:
     """
     Le raster recortado pela geometria.
 
@@ -282,7 +283,7 @@ def _read_raster_aligned_to(
 # ---------------------------------------------------------------------------
 
 def compute_c_and_cn(
-    geom: Polygon,
+    geom: BaseGeometry,
     fonte_lulc: str = "mapbiomas",
     ano_lulc: int = 2023,
 ) -> LanduseResult:
@@ -291,7 +292,10 @@ def compute_c_and_cn(
 
     Parameters
     ----------
-    geom : shapely Polygon em EPSG:4326 (bacia delineada).
+    geom : geometria shapely em EPSG:4326 (bacia delineada). Polygon ou
+           MultiPolygon — bacias com fragmentos desconexos saem como
+           MultiPolygon e tambem sao aceitas (rio_mask e ee.Geometry lidam
+           com multipart).
     fonte_lulc : 'mapbiomas' (30 m, Brasil) ou 'dynamic_world' (10 m, global).
     ano_lulc : ano do produto LULC.
     """

@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
-from shapely.geometry import Polygon, box
+from shapely.geometry import MultiPolygon, Polygon, box
 
 from chuva_vazao import gee_client
 
@@ -76,6 +77,47 @@ def test_cache_path_usa_diretorio_correto():
 def test_to_ee_geometry_rejeita_tipo_errado():
     with pytest.raises(TypeError):
         gee_client._to_ee_geometry([1, 2, 3, 4])  # type: ignore[arg-type]
+
+
+def _multipolygon_bacia() -> MultiPolygon:
+    """Bacia com fragmento desconexo — caso classico da vetorizacao do WBT."""
+    return MultiPolygon([
+        box(-44.32, -22.68, -44.31, -22.67),
+        box(-44.305, -22.665, -44.30, -22.66),
+    ])
+
+
+def test_to_ee_geometry_aceita_multipolygon():
+    """
+    Regressao: bacia delineada com fragmentos vira MultiPolygon (union_all).
+    Antes levantava 'Tipo nao suportado'. Mock em ee.Geometry para nao depender
+    de GEE inicializado.
+    """
+    mp = _multipolygon_bacia()
+    with patch.object(gee_client.ee, "Geometry", return_value="EE_SENTINEL") as mock_geom:
+        result = gee_client._to_ee_geometry(mp)
+    assert result == "EE_SENTINEL"
+    passed = mock_geom.call_args[0][0]
+    assert passed["type"] == "MultiPolygon"
+
+
+def test_to_ee_geometry_aceita_polygon():
+    """Polygon continua funcionando (sem regressao)."""
+    poly = box(-44.32, -22.68, -44.31, -22.67)
+    with patch.object(gee_client.ee, "Geometry", return_value="EE_SENTINEL") as mock_geom:
+        result = gee_client._to_ee_geometry(poly)
+    assert result == "EE_SENTINEL"
+    assert mock_geom.call_args[0][0]["type"] == "Polygon"
+
+
+def test_cache_path_aceita_multipolygon():
+    """_cache_path nao deve quebrar com MultiPolygon (era o 2o ponto fragil)."""
+    mp = _multipolygon_bacia()
+    p1 = gee_client._cache_path("mapbiomas_c9", mp, extra="a2023s30")
+    p2 = gee_client._cache_path("mapbiomas_c9", mp, extra="a2023s30")
+    assert p1 == p2
+    assert "gee_cache" in str(p1)
+    assert p1.suffix == ".tif"
 
 
 # ---------------------------------------------------------------------------
