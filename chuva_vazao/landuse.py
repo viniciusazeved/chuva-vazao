@@ -164,25 +164,31 @@ CN_POR_CATEGORIA_E_GH: dict[str, dict[str, float]] = {
 
 def classify_hydrological_group(sand_pct: np.ndarray, clay_pct: np.ndarray) -> np.ndarray:
     """
-    Retorna array de strings com GH (`'A'`, `'B'`, `'C'` ou `'D'`).
+    Grupo hidrologico NRCS (A/B/C/D) adaptado a solos TROPICAIS brasileiros,
+    seguindo o principio de Sartori et al. (2005).
+
+    Latossolos e Argissolos — predominantes no Brasil — sao argilosos mas muito
+    porosos e bem estruturados: infiltram/drenam bem APESAR da textura argilosa.
+    A classificacao por textura pura (Rawls & Brakensiek) os superestima, jogando
+    quase tudo em C/D (clay>=40 -> D) e inflando o CN. Aqui o GH e **B por
+    default** (solo tropical bem drenado, ex.: Latossolo argiloso), virando:
+        A  -> solos arenosos (Neossolo Quartzarenico, textura media arenosa);
+        C  -> pouco arenosos com restricao (Argissolo abruptico, Cambissolo);
+        D  -> muito argilosos e mal drenados (Gleissolo, Vertissolo, raso).
+    Resultado: argila bem-estruturada deixa de ir direto pra D — CN mais proximo
+    dos estudos brasileiros (Sartori) do que da textura crua.
 
     Parameters
     ----------
     sand_pct, clay_pct : arrays % (0-100).
     """
-    gh = np.full(sand_pct.shape, "C", dtype="<U1")
-    # D: argila muito pesada ou areia muito baixa
-    mask_d = (clay_pct >= 40) | (sand_pct < 20)
-    gh[mask_d] = "D"
-    # C: argila 20-40, areia 20-50 (nao D, nao B)
-    mask_c = (~mask_d) & ((clay_pct >= 20) | (sand_pct < 50))
-    gh[mask_c] = "C"
-    # B: areno-argiloso (clay 10-20, sand 50-70) ou sand 50-70 com clay<20
-    mask_b = (~mask_d) & (~mask_c) & ((sand_pct >= 50) & (clay_pct < 20))
-    gh[mask_b] = "B"
-    # A: muito arenoso, pouca argila
-    mask_a = (sand_pct >= 70) & (clay_pct < 10)
-    gh[mask_a] = "A"
+    gh = np.full(sand_pct.shape, "B", dtype="<U1")
+    # A: solos arenosos (alta infiltracao)
+    gh[sand_pct >= 65] = "A"
+    # C: pouco arenosos / com gradiente textural (drenagem restrita)
+    gh[(sand_pct < 25) & (clay_pct >= 30)] = "C"
+    # D: muito argilosos e mal drenados (hidromorficos, expansivos, rasos)
+    gh[(sand_pct < 15) & (clay_pct >= 55)] = "D"
     return gh
 
 
