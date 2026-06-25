@@ -1027,6 +1027,93 @@ def plot_perfil_inundacao(perfil) -> go.Figure:
     return fig
 
 
+def fig_subbacias_choropleth(gdf_utm, ids, valores, label: str = "CN2") -> go.Figure:
+    """
+    Choropleth Plotly das sub-bacias coloridas por `valores` (ex.: CN), com
+    colorbar, rotulo do id e hover — padrao Plotly do app (substitui o mapa
+    matplotlib). gdf_utm em CRS projetado (m): poligonos preenchidos + colorbar
+    via scatter dos centroides (truque p/ colorbar de fills individuais).
+    """
+    from plotly.colors import sample_colorscale  # noqa: PLC0415
+
+    vals = [float(v) for v in valores]
+    vmin, vmax = (min(vals), max(vals)) if vals else (0.0, 1.0)
+    span = (vmax - vmin) or 1.0
+    fig = go.Figure()
+    for geom, sid, val in zip(gdf_utm.geometry, ids, vals):
+        polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        cor = sample_colorscale("YlOrBr", (val - vmin) / span)[0]
+        for poly in polys:
+            xs, ys = poly.exterior.coords.xy
+            fig.add_trace(go.Scatter(
+                x=list(xs), y=list(ys), fill="toself", fillcolor=cor,
+                line=dict(color="white", width=0.6), mode="lines",
+                hoverinfo="text", text=f"Sub-bacia {sid}<br>{label} = {val:.1f}",
+                showlegend=False,
+            ))
+    cx = [g.representative_point().x for g in gdf_utm.geometry]
+    cy = [g.representative_point().y for g in gdf_utm.geometry]
+    fig.add_trace(go.Scatter(
+        x=cx, y=cy, mode="markers+text",
+        marker=dict(color=vals, colorscale="YlOrBr", cmin=vmin, cmax=vmax,
+                    size=0.1, showscale=True, colorbar=dict(title=label, len=0.85)),
+        text=[str(i) for i in ids], textposition="middle center",
+        textfont=dict(size=9, color="black"), hoverinfo="skip", showlegend=False,
+    ))
+    fig.update_layout(
+        height=480, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False, scaleanchor="x", scaleratio=1),
+    )
+    return fig
+
+
+def fig_topologia_subbacias(gdf_utm, ids, grafo, exutorio_id) -> go.Figure:
+    """
+    Rede de drenagem / topologia das sub-bacias (Plotly): contorno das sub-bacias,
+    ligacoes montante->jusante (centroide a centroide) e o exutorio destacado.
+    `grafo` = {id: id_jusante|None}. Eixos em metros (CRS projetado), aspecto 1:1.
+    """
+    fig = go.Figure()
+    cent = {}
+    for geom, sid in zip(gdf_utm.geometry, ids):
+        polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
+        for poly in polys:
+            xs, ys = poly.exterior.coords.xy
+            fig.add_trace(go.Scatter(
+                x=list(xs), y=list(ys), fill="toself",
+                fillcolor="rgba(173,216,230,0.30)", line=dict(color="#5a9bd4", width=0.7),
+                mode="lines", hoverinfo="skip", showlegend=False,
+            ))
+        cent[sid] = geom.representative_point()
+    for sid, dn in grafo.items():
+        if dn is not None and sid in cent and dn in cent:
+            c0, c1 = cent[sid], cent[dn]
+            fig.add_trace(go.Scatter(
+                x=[c0.x, c1.x], y=[c0.y, c1.y], mode="lines",
+                line=dict(color="#08306b", width=1.3), hoverinfo="skip", showlegend=False,
+            ))
+    fig.add_trace(go.Scatter(
+        x=[c.x for c in cent.values()], y=[c.y for c in cent.values()],
+        mode="markers+text", text=[str(i) for i in cent], textposition="middle center",
+        textfont=dict(size=8, color="#08306b"), marker=dict(size=3, color="#08306b"),
+        hoverinfo="text", hovertext=[f"Sub-bacia {i}" for i in cent], showlegend=False,
+    ))
+    if exutorio_id in cent:
+        e = cent[exutorio_id]
+        fig.add_trace(go.Scatter(
+            x=[e.x], y=[e.y], mode="markers",
+            marker=dict(symbol="star", size=15, color="red"),
+            hoverinfo="text", hovertext="Exutorio", showlegend=False,
+        ))
+    fig.update_layout(
+        height=480, margin=dict(l=10, r=10, t=10, b=10), plot_bgcolor="white",
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False, scaleanchor="x", scaleratio=1),
+    )
+    return fig
+
+
 def fig_mancha_hillshade(mancha):
     """
     Mancha de inundacao sobre o relevo do MDT, em DOIS paineis lado a lado

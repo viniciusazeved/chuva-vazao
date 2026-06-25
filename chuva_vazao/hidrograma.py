@@ -118,26 +118,28 @@ def uh_triangular_scs(
     area_km2: float,
     tempo_concentracao_h: float,
     duracao_chuva_min: float,
+    prf: float = 484.0,
 ) -> UHTriangular:
     """
     Constroi a UH triangular SCS.
 
-    Relacoes SCS:
+    Relacoes SCS (PRF = 484, padrao):
         t_lag = 0.6 * t_c
         t_pico = D/2 + t_lag  (D = duracao unitaria)
         t_base = 2.67 * t_pico
         Q_pico = 0.208 * A / t_pico   [m^3/s por mm, com A em km^2 e t_pico em h]
 
-    A constante 0.208 e derivada de conservacao de massa: volume sob a UH
-    triangular = 0.5 * t_base * Q_pico = A * 1mm. Para A em km^2 e tempos em h:
-        Q_pico [m^3/s/mm] = 2 * A * 1000 [m^3/mm] / (2.67 * t_pico * 3600) = 0.208 * A / t_pico.
-    Valor 2.08 aparece em literatura com unidades inglesas (cfs, sq mi, inch).
+    `prf` = peak rate factor. 484 e o padrao (bacias mistas). Valores MENORES
+    (300, 256, ...) achatam a UH — base maior e pico menor, CONSERVANDO o volume
+    — apropriado a bacias com vale/planicie de inundacao e maior armazenamento
+    (o pico do SCS-484 superestima nesses casos). t_base e Q_pico escalam por
+    484/prf e prf/484; o produto (volume) e invariante.
     """
     D_h = duracao_chuva_min / 60.0
     t_lag = 0.6 * tempo_concentracao_h
     t_pico = D_h / 2.0 + t_lag
-    t_base = 2.67 * t_pico
-    Q_pico = 0.208 * area_km2 / t_pico
+    t_base = 2.67 * (484.0 / prf) * t_pico
+    Q_pico = 0.208 * (prf / 484.0) * area_km2 / t_pico
     return UHTriangular(t_pico_h=t_pico, t_base_h=t_base, Q_pico_m3s_por_mm=Q_pico)
 
 
@@ -148,6 +150,7 @@ def uh_triangular_scs(
 def hidrograma_projeto(
     hietograma_mm: pd.Series,
     params: SCSParams,
+    prf: float = 484.0,
 ) -> pd.DataFrame:
     """
     Gera o hidrograma de projeto a partir do hietograma bruto.
@@ -177,6 +180,7 @@ def hidrograma_projeto(
         area_km2=params.area_km2,
         tempo_concentracao_h=params.tempo_concentracao_h,
         duracao_chuva_min=dt_min,  # UH corresponde a um bloco unitario dt
+        prf=prf,
     )
     uh_series = uh.ordenadas(dt_min=dt_min)
 
@@ -283,18 +287,22 @@ def select_method(area_km2: float) -> str:
     Escolhe metodo de transformacao chuva-vazao pelo tamanho da bacia.
 
     Regras (DAEE):
-        A <= 2 km^2 -> Racional
-        A >  2 km^2 -> SCS-HU triangular
+        A <= 2 km^2   -> Racional
+        2 < A <= 250  -> SCS-HU triangular (concentrado)
+        A > 250 km^2  -> Distribuido (sub-bacias + Muskingum-Cunge)
 
     Acima de ~250 km^2 o SCS-HU concentrado perde precisao (chuva nao-uniforme,
-    tempo de viagem variavel na bacia). A UI ALERTA mas NAO bloqueia — serve como
-    estimativa preliminar; para projeto, discretizar em sub-bacias e rotear.
+    tempo de viagem variavel) — o app passa a recomendar o modelo distribuido,
+    que discretiza em sub-bacias e roteia. O usuario ainda pode forcar o SCS-HU
+    concentrado como estimativa preliminar.
     """
     if area_km2 <= 0:
         raise ValueError("area deve ser positiva.")
     if area_km2 <= 2.0:
         return "Racional"
-    return "SCS-HU"
+    if area_km2 <= 250.0:
+        return "SCS-HU"
+    return "Distribuído"
 
 
 def hidrograma_triangular_sintetico(

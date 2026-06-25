@@ -217,6 +217,7 @@ if delinear and dem_path is not None:
         ],
         "metrics": result.metrics.summary_dict(),
         "clipped_by_dem": result.clipped_by_dem,
+        "snap_method": snap_method,
     }
     st.session_state["basin_metrics"] = result.metrics
     st.rerun()
@@ -254,11 +255,15 @@ if bres is not None and metrics is not None:
     cols[0].metric("Z máx", f"{d['Z max (m)']:g} m")
     cols[1].metric("Z mín", f"{d['Z min (m)']:g} m")
     cols[2].metric("ΔH", f"{d['dH (m)']:g} m")
+    metodo_rec = (
+        "Racional" if metrics.area_km2 <= 2
+        else "SCS-HU" if metrics.area_km2 <= 250
+        else "Distribuído"
+    )
     cols[3].metric(
-        "Método recomendado",
-        "Racional" if metrics.area_km2 <= 2 else "SCS-HU",
-        help=("Acima de ~250 km² o SCS-HU é preliminar (precisão reduzida); "
-              "para projeto, discretizar em sub-bacias."
+        "Método recomendado", metodo_rec,
+        help=("Acima de 250 km² o recomendado é o modelo Distribuído (sub-bacias "
+              "+ Muskingum-Cunge), disponível na Página 3."
               if metrics.area_km2 > 250 else None),
     )
 
