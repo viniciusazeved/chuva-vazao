@@ -15,6 +15,10 @@ data/chuvavazao.db
 data/mdb_origem.mdb
 data/_smoke_pdf/
 
+# Dados geoespaciais pesados (nao versionar — GBs)
+*.gpkg
+data/BHAE_CN2022.gpkg
+
 # Saidas de relatorios e exports
 out/
 
