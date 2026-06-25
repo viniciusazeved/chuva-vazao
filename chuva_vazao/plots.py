@@ -985,3 +985,122 @@ def plot_perfil_longitudinal(verificacao) -> go.Figure:
     return fig
 
 
+# ---------------------------------------------------------------------------
+# Inundacao fluvial 1D (pagina 7)
+# ---------------------------------------------------------------------------
+
+def plot_perfil_inundacao(perfil) -> go.Figure:
+    """
+    Perfil longitudinal da linha d'agua da inundacao 1D: WSE sobre o thalweg ao
+    longo do eixo (jusante -> montante), com marcadores de extravasamento.
+    """
+    est = [p.estaca_rio_m for p in perfil.pontos]
+    fig = go.Figure()
+    # Thalweg primeiro (a WSE preenche ate ele via tonexty).
+    fig.add_trace(go.Scatter(
+        x=est, y=[p.z_thalweg_m for p in perfil.pontos],
+        name="Thalweg (leito)", mode="lines+markers",
+        line=dict(color="#6b4226", width=2), marker=dict(size=6, symbol="triangle-up"),
+        hovertemplate="estaca=%{x:.0f} m<br>z_leito=%{y:.2f} m<extra></extra>",
+    ))
+    fig.add_trace(go.Scatter(
+        x=est, y=[p.wse_m for p in perfil.pontos],
+        name="Linha d'água", mode="lines+markers",
+        line=dict(color="#1f77b4", width=2), marker=dict(size=6),
+        fill="tonexty", fillcolor="rgba(31, 119, 180, 0.20)",
+        hovertemplate="estaca=%{x:.0f} m<br>WSE=%{y:.2f} m<extra></extra>",
+    ))
+    ext = [(p.estaca_rio_m, p.wse_m) for p in perfil.pontos if p.extravasou]
+    if ext:
+        fig.add_trace(go.Scatter(
+            x=[e[0] for e in ext], y=[e[1] for e in ext],
+            name="Extravasou", mode="markers",
+            marker=dict(color="#d62728", size=11, symbol="x"),
+            hovertemplate="estaca=%{x:.0f} m — extravasamento<extra></extra>",
+        ))
+    fig.update_layout(
+        template="plotly_white", height=430, hovermode="x unified",
+        xaxis_title="Estaca ao longo do rio (m) — jusante -> montante",
+        yaxis_title="Cota (m)",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+    return fig
+
+
+def fig_mancha_hillshade(mancha):
+    """
+    Mancha de inundacao sobre o relevo do MDT, em DOIS paineis lado a lado
+    (relevo neutro cinza | elevacao terrosa), fundo branco, com a profundidade
+    INTERATIVA (hover da lamina) por cima. Figura **Plotly** — consistente com o
+    resto do app.
+
+    O relevo sombreado (hillshade) e calculado com matplotlib LightSource e
+    plotado como go.Image (RGB); a profundidade vira go.Heatmap (Blues, hover).
+    """
+    import numpy as np  # noqa: PLC0415
+    import plotly.graph_objects as go  # noqa: PLC0415
+    from plotly.subplots import make_subplots  # noqa: PLC0415
+
+    import matplotlib  # noqa: PLC0415
+    matplotlib.use("Agg")
+    import matplotlib.colors as mcolors  # noqa: PLC0415
+    import matplotlib.pyplot as plt  # noqa: PLC0415
+    from matplotlib.colors import LightSource  # noqa: PLC0415
+
+    z = mancha.mdt_z
+    prof = mancha.profundidade
+    t = mancha.transform
+    nrow, ncol = z.shape
+    step = max(1, int(max(nrow, ncol) // 900))    # subamostra p/ render leve
+    zc = z[::step, ::step]
+    pc = prof[::step, ::step]
+    px = abs(t.a) * step
+    py = abs(t.e) * step
+    left, top = t.c, t.f
+    nr, nc = zc.shape
+    xs = left + (np.arange(nc) + 0.5) * px            # centros E (UTM)
+    ys = top - (np.arange(nr) + 0.5) * py             # centros N (UTM, decrescente)
+
+    mask_nd = ~np.isfinite(zc)
+    zfill = np.where(mask_nd, np.nanmin(zc), zc)
+    ls = LightSource(azdeg=315, altdeg=45)
+    vmax = max(mancha.prof_max_m, 0.1)
+    pm = np.where(np.isfinite(pc), pc, np.nan)
+
+    # Elevacao terrosa SEM azul (corta a parte azul/agua do terrain).
+    terra = mcolors.LinearSegmentedColormap.from_list(
+        "terra", plt.cm.terrain(np.linspace(0.25, 1.0, 256)),
+    )
+
+    fig = make_subplots(
+        rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.08,
+        subplot_titles=("Hillshade (escala de cinza)", "Hillshade colorido (elevação)"),
+    )
+    for k, cmap_r in enumerate([plt.cm.gray, terra]):
+        rgb = ls.shade(zfill, cmap=cmap_r, vert_exag=3.0, blend_mode="soft")
+        rgb[mask_nd] = 1.0   # nodata -> branco
+        rgb_u8 = (rgb[..., :3] * 255).astype(np.uint8)
+        fig.add_trace(
+            go.Image(z=rgb_u8, x0=float(xs[0]), dx=float(px),
+                     y0=float(ys[0]), dy=float(-py), hoverinfo="skip"),
+            row=1, col=k + 1,
+        )
+        fig.add_trace(
+            go.Heatmap(
+                z=pm, x=xs, y=ys, colorscale="Blues", zmin=0.0, zmax=vmax,
+                opacity=0.82, showscale=(k == 1), colorbar=dict(title="Prof. (m)"),
+                hovertemplate="E=%{x:.0f}<br>N=%{y:.0f}<br>prof=%{z:.2f} m<extra></extra>",
+            ),
+            row=1, col=k + 1,
+        )
+    # N pra cima (go.Image inverteria o eixo Y por padrao) + aspecto 1:1.
+    fig.update_yaxes(autorange=True, scaleanchor="x", scaleratio=1,
+                     title_text="N (m, UTM)", row=1, col=1)
+    fig.update_yaxes(autorange=True, scaleanchor="x2", scaleratio=1, row=1, col=2)
+    fig.update_xaxes(title_text="E (m, UTM)", row=1, col=1)
+    fig.update_xaxes(title_text="E (m, UTM)", row=1, col=2)
+    fig.update_layout(template="plotly_white", height=520,
+                      margin=dict(l=10, r=10, t=40, b=10))
+    return fig
+
+

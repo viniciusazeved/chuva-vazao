@@ -89,16 +89,23 @@ _default_state()
 
 pages_dir = Path(__file__).parent / "app_pages"
 
-pg = st.navigation([
-    st.Page(str(pages_dir / "bacia.py"), title="0. Bacia", icon=":material/terrain:"),
-    st.Page(str(pages_dir / "posto_idf.py"), title="1. Posto e IDF", icon=":material/location_on:"),
-    st.Page(str(pages_dir / "hietograma.py"), title="2. Hietograma", icon=":material/rainy:"),
-    st.Page(str(pages_dir / "hidrograma.py"), title="3. Chuva - Vazão", icon=":material/water_drop:"),
-    st.Page(str(pages_dir / "secao.py"), title="4. Verificação de Seção", icon=":material/landscape:"),
-    st.Page(str(pages_dir / "hidraulica.py"), title="5. Hidráulica", icon=":material/plumbing:"),
-    st.Page(str(pages_dir / "detencao.py"), title="6. Detenção", icon=":material/waves:"),
-    st.Page(str(pages_dir / "exportar.py"), title="7. Exportar", icon=":material/download:"),
-])
+pg = st.navigation({
+    "Chuva → Vazão": [
+        st.Page(str(pages_dir / "bacia.py"), title="0. Bacia", icon=":material/terrain:"),
+        st.Page(str(pages_dir / "posto_idf.py"), title="1. Posto e IDF", icon=":material/location_on:"),
+        st.Page(str(pages_dir / "hietograma.py"), title="2. Hietograma", icon=":material/rainy:"),
+        st.Page(str(pages_dir / "hidrograma.py"), title="3. Chuva - Vazão", icon=":material/water_drop:"),
+    ],
+    "Análises e Dimensionamento": [
+        st.Page(str(pages_dir / "secao.py"), title="4. Verificação de Seção", icon=":material/landscape:"),
+        st.Page(str(pages_dir / "hidraulica.py"), title="5. Hidráulica", icon=":material/plumbing:"),
+        st.Page(str(pages_dir / "detencao.py"), title="6. Detenção", icon=":material/waves:"),
+        st.Page(str(pages_dir / "inundacao.py"), title="7. Inundação 1D", icon=":material/flood:"),
+    ],
+    "Relatório": [
+        st.Page(str(pages_dir / "exportar.py"), title="8. Exportar", icon=":material/download:"),
+    ],
+})
 
 _LOGO_LAPLA = Path(__file__).parent / "assets" / "logo_lapla.png"
 
@@ -144,6 +151,8 @@ with st.sidebar:
         st.caption("Hidráulica dimensionada ✓")
     if st.session_state.get("detencao") is not None:
         st.caption("Detenção roteada ✓")
+    if st.session_state.get("inu_resultado") is not None:
+        st.caption("Inundação 1D calculada ✓")
 
     st.divider()
     st.caption(

@@ -1,4 +1,4 @@
-"""Página 7: exportar PDF técnico modular e CSVs dos resultados."""
+"""Página 8: exportar PDF técnico modular e CSVs dos resultados."""
 from __future__ import annotations
 
 from io import StringIO
@@ -10,7 +10,7 @@ from chuva_vazao import plots
 from chuva_vazao.report import RelatorioInputs, gerar_relatorio_pdf
 
 
-st.title("7. Exportar Resultados")
+st.title("8. Exportar Resultados")
 st.caption(
     "PDF modular: cada página que você rodou no app vira uma seção do relatório. "
     "Não precisa rodar tudo — gere PDF só do dimensionamento, só da verificação "
@@ -45,6 +45,10 @@ modulos_disponiveis = {
     "detencao": (
         "Reservatório de detenção (Página 6)",
         st.session_state.get("detencao") is not None,
+    ),
+    "inundacao": (
+        "Inundação fluvial 1D (Página 7)",
+        st.session_state.get("inu_resultado") is not None,
     ),
 }
 
@@ -251,6 +255,29 @@ if st.button("Gerar PDF", type="primary"):
             res = st.session_state.get("detencao_reservatorio")
             if res is not None:
                 kwargs["fig_detencao_caracteristicas"] = plots.plot_cota_volume_descarga(res)
+
+        # Inundacao 1D
+        if modulos_selecionados.get("inundacao"):
+            inu_res = st.session_state.get("inu_resultado")
+            if inu_res is not None:
+                ger = inu_res["ger"]
+                perfil = inu_res["perfil"]
+                mancha = inu_res["mancha"]
+                warns = list(perfil.warnings) + list(ger.avisos) + list(mancha.avisos)
+                kwargs["inundacao"] = {
+                    "Q_m3_s": perfil.Q_m3_s,
+                    "n": perfil.n_manning,
+                    "cc_jusante": perfil.cc_jusante,
+                    "n_secoes": len(ger.secoes),
+                    "L_eixo_m": ger.comprimento_eixo_m,
+                    "area_ha": mancha.area_alagada_m2 / 1e4,
+                    "prof_max_m": mancha.prof_max_m,
+                    "prof_media_m": mancha.prof_media_m,
+                    "warnings": warns,
+                }
+                kwargs["inundacao_tabela"] = perfil.to_dataframe()
+                kwargs["fig_inundacao_mancha"] = plots.fig_mancha_hillshade(mancha)
+                kwargs["fig_inundacao_perfil"] = plots.plot_perfil_inundacao(perfil)
 
         inputs = RelatorioInputs(**kwargs)
         pdf_bytes = gerar_relatorio_pdf(inputs)

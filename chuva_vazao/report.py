@@ -132,6 +132,12 @@ class RelatorioInputs:
     fig_detencao_caracteristicas: go.Figure | None = None # V/A x z + descarga
     fig_mancha: go.Figure | None = None                   # mancha sobre bacia (opcional)
 
+    # ----- Modulo Inundacao Fluvial 1D (pagina 7) -----
+    inundacao: dict | None = None                         # resumo (Q, n, cc, area_ha, prof, n_secoes, L, warnings)
+    inundacao_tabela: pd.DataFrame | None = None          # perfil por secao
+    fig_inundacao_mancha: object | None = None            # matplotlib Figure (hillshade + mancha)
+    fig_inundacao_perfil: go.Figure | None = None         # perfil longitudinal (Plotly)
+
 
 # ---------------------------------------------------------------------------
 # RelatorioPDF — fpdf2 estilizado
@@ -301,6 +307,25 @@ class RelatorioPDF(FPDF):
             except OSError:
                 pass
 
+    def add_mpl_figure(self, fig, *, width_mm: float | None = None):
+        """Insere uma figura matplotlib (savefig PNG); altura automatica p/ manter aspecto."""
+        import matplotlib.pyplot as plt  # noqa: PLC0415
+        if width_mm is None:
+            width_mm = USABLE_W
+        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
+            tmp_path = Path(tmp.name)
+        try:
+            fig.savefig(str(tmp_path), dpi=150, bbox_inches="tight")
+            plt.close(fig)
+            x = MARGIN_LR + (USABLE_W - width_mm) / 2
+            self.image(str(tmp_path), x=x, w=width_mm)
+            self.ln(4)
+        finally:
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+
     # ---- Cover -----------------------------------------------------------
     def add_cover(self, modulos_label: str):
         self.add_page()
@@ -407,6 +432,8 @@ def _detectar_modulos(inputs: RelatorioInputs) -> list[str]:
         modulos.append("dimensionamento")
     if inputs.detencao is not None:
         modulos.append("detencao")
+    if inputs.inundacao is not None:
+        modulos.append("inundacao")
     return modulos
 
 
@@ -416,6 +443,7 @@ _MODULO_NOMES = {
     "verificacao_secao": "Verificacao Hidraulica de Secao",
     "dimensionamento": "Dimensionamento Hidraulico de Conduto",
     "detencao": "Reservatorio de Detencao",
+    "inundacao": "Inundacao Fluvial 1D",
 }
 
 
@@ -802,6 +830,73 @@ def _render_detencao(pdf: RelatorioPDF, inp: RelatorioInputs):
             pdf.add_figure(inp.fig_mancha, height_mm=110)
 
 
+def _render_inundacao(pdf: RelatorioPDF, inp: RelatorioInputs):
+    inu = inp.inundacao or {}
+    pdf.add_page()
+    pdf.add_section("Inundacao Fluvial 1D")
+    pdf.add_text(
+        "Mancha de inundacao por modelo 1D permanente (standard step / escoamento "
+        "gradualmente variado). Secoes transversais perpendiculares ao eixo do rio "
+        "sao amostradas do MDT; a linha d'agua e resolvida secao a secao por balanco "
+        "de energia (Manning + perdas de contracao/expansao), marchando de jusante "
+        "para montante a partir de uma condicao de contorno, e projetada no terreno "
+        "(profundidade = cota d'agua - cota do terreno) para gerar a mancha."
+    )
+    pdf.add_kv_row([
+        ("Q de projeto:", f"{inu.get('Q_m3_s', 0):.3f} m³/s"),
+        ("n de Manning:", f"{inu.get('n', 0):.3f}"),
+    ])
+    pdf.add_kv_row([
+        ("Contorno de jusante:", str(inu.get("cc_jusante", "?"))),
+        ("Numero de secoes:", f"{inu.get('n_secoes', 0)}"),
+    ])
+    pdf.add_kv_row([
+        ("Comprimento do eixo:", f"{inu.get('L_eixo_m', 0):.0f} m"),
+        ("Area alagada:", f"{inu.get('area_ha', 0):.2f} ha"),
+    ])
+    pdf.add_kv_row([
+        ("Profundidade maxima:", f"{inu.get('prof_max_m', 0):.2f} m"),
+        ("Profundidade media:", f"{inu.get('prof_media_m', 0):.2f} m"),
+    ])
+
+    if inp.fig_inundacao_mancha is not None:
+        pdf.add_subsection("Mancha de inundacao sobre o MDT")
+        pdf.add_figure(inp.fig_inundacao_mancha, height_mm=85)
+
+    if inp.fig_inundacao_perfil is not None:
+        pdf.add_subsection("Perfil longitudinal da linha d'agua")
+        pdf.add_figure(inp.fig_inundacao_perfil, height_mm=80)
+
+    warns = inu.get("warnings") or []
+    if warns:
+        pdf.add_subsection("Alertas")
+        for w in warns:
+            pdf.add_text(f"- {w}", size=9)
+
+    if inp.inundacao_tabela is not None and len(inp.inundacao_tabela):
+        pdf.add_subsection("Resultados por secao (amostra)")
+        df = inp.inundacao_tabela.copy()
+        cols = [c for c in
+                ["estaca_rio_m", "z_thalweg_m", "WSE_m", "y_m", "V_m_s", "Fr", "regime"]
+                if c in df.columns]
+        df = df[cols]
+        if len(df) > 20:   # amostra equiespacada p/ nao explodir o PDF
+            df = df.iloc[:: max(1, len(df) // 20)].reset_index(drop=True)
+        df = df.rename(columns={
+            "estaca_rio_m": "Estaca (m)", "z_thalweg_m": "z leito (m)",
+            "WSE_m": "WSE (m)", "y_m": "y (m)", "V_m_s": "v (m/s)",
+        })
+        pdf.add_dataframe(df, col_widths=[1.1, 1.0, 1.0, 0.8, 0.9, 0.7, 1.2][:len(df.columns)])
+
+    pdf.add_text(
+        "Modelo 1D permanente: a mancha e a cota d'agua projetada, nao capta "
+        "propagacao transiente, backwater de estruturas (pontes/bueiros) nem fluxo "
+        "2D em confluencias. Adequado a triagem/regularizacao; para cota de projeto "
+        "de obra, validar contra modelagem hidrodinamica.",
+        size=8,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Referencias por modulo
 # ---------------------------------------------------------------------------
@@ -829,6 +924,12 @@ _REFS_HIDRAULICA = [
 _REFS_BACIA = [
     ("Lindsay, J. (2014). WhiteboxTools User Manual."),
 ]
+_REFS_INUNDACAO = [
+    ("USACE (2016). HEC-RAS River Analysis System — Hydraulic Reference Manual. "
+     "US Army Corps of Engineers."),
+    ("Chow, V. T. (1959). Open-Channel Hydraulics. McGraw-Hill (cap. 10: standard "
+     "step method)."),
+]
 
 
 def _render_referencias(pdf: RelatorioPDF, modulos: list[str]):
@@ -842,6 +943,8 @@ def _render_referencias(pdf: RelatorioPDF, modulos: list[str]):
         refs += _REFS_HIDRAULICA
     if "bacia" in modulos:
         refs += _REFS_BACIA
+    if "inundacao" in modulos:
+        refs += _REFS_INUNDACAO
 
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*COLOR_TEXT)
@@ -881,6 +984,8 @@ def gerar_relatorio_pdf(inputs: RelatorioInputs) -> bytes:
         _render_dimensionamento(pdf, inputs)
     if "detencao" in modulos:
         _render_detencao(pdf, inputs)
+    if "inundacao" in modulos:
+        _render_inundacao(pdf, inputs)
 
     pdf.add_page()
     _render_referencias(pdf, modulos)
