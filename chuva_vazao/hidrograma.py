@@ -283,17 +283,18 @@ def select_method(area_km2: float) -> str:
     Escolhe metodo de transformacao chuva-vazao pelo tamanho da bacia.
 
     Regras (DAEE):
-        A <= 2 km^2  -> Racional
-        2 < A <= 250 -> SCS-HU triangular
-        A > 250      -> aviso (modelo distribuido recomendado)
+        A <= 2 km^2 -> Racional
+        A >  2 km^2 -> SCS-HU triangular
+
+    Acima de ~250 km^2 o SCS-HU concentrado perde precisao (chuva nao-uniforme,
+    tempo de viagem variavel na bacia). A UI ALERTA mas NAO bloqueia — serve como
+    estimativa preliminar; para projeto, discretizar em sub-bacias e rotear.
     """
     if area_km2 <= 0:
         raise ValueError("area deve ser positiva.")
     if area_km2 <= 2.0:
         return "Racional"
-    if area_km2 <= 250.0:
-        return "SCS-HU"
-    return "Modelo distribuido (fora do escopo)"
+    return "SCS-HU"
 
 
 def hidrograma_triangular_sintetico(

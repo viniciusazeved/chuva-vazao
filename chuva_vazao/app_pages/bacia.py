@@ -124,6 +124,15 @@ with col2:
         "Threshold canal (células)", 10, 10000, 100, 10,
         help="Número mínimo de células para considerar canal. Maior = rede mais esparsa.",
     )
+    snap_metodo = st.selectbox(
+        "Snap do exutório",
+        ["Maior acumulação (rio principal)", "Canal mais próximo (Jenson)"],
+        help="Maior acumulação leva o exutório ao rio de maior área de drenagem "
+             "dentro do raio — robusto, evita grudar num córrego lateral. Jenson "
+             "vai ao canal mais próximo (respeita o clique, mas pode pegar "
+             "afluente pequeno se o threshold estiver baixo).",
+    )
+    snap_method = "accumulation" if snap_metodo.startswith("Maior") else "jenson"
 
 with col1:
     m = folium.Map(location=[lat, lon], zoom_start=13, tiles="OpenStreetMap")
@@ -188,6 +197,7 @@ if delinear and dem_path is not None:
             result = basin.delineate_basin(
                 lat=lat, lon=lon, dem_path=dem_path,
                 snap_dist_m=snap_dist, stream_threshold=int(stream_thresh),
+                snap_method=snap_method,
             )
             st.write("Delineamento concluído.")
             status.update(label="Bacia delineada ✓", state="complete")
@@ -206,6 +216,7 @@ if delinear and dem_path is not None:
             [result.basin_gdf.total_bounds[3], result.basin_gdf.total_bounds[2]],
         ],
         "metrics": result.metrics.summary_dict(),
+        "clipped_by_dem": result.clipped_by_dem,
     }
     st.session_state["basin_metrics"] = result.metrics
     st.rerun()
@@ -219,6 +230,15 @@ bres = st.session_state.get("basin_result")
 metrics = st.session_state.get("basin_metrics")
 if bres is not None and metrics is not None:
     st.divider()
+    if bres.get("clipped_by_dem"):
+        st.warning(
+            "A bacia encosta na borda do DEM — provavelmente está **truncada** "
+            "(aquele lado reto é o limite do raster baixado, não o divisor de águas "
+            "real). Como o exutório fica a jusante, a bacia se estende bastante numa "
+            "direção; **aumente o Buffer (graus)** na Fonte do DEM e baixe de novo. "
+            "Enquanto isso, **área, perímetro e L do canal estão subestimados**.",
+            icon="⚠️",
+        )
     st.subheader("Métricas da bacia")
     cols = st.columns(4)
     d = bres["metrics"]
@@ -236,7 +256,10 @@ if bres is not None and metrics is not None:
     cols[2].metric("ΔH", f"{d['dH (m)']:g} m")
     cols[3].metric(
         "Método recomendado",
-        "Racional" if metrics.area_km2 <= 2 else ("SCS-HU" if metrics.area_km2 <= 250 else "Distribuído"),
+        "Racional" if metrics.area_km2 <= 2 else "SCS-HU",
+        help=("Acima de ~250 km² o SCS-HU é preliminar (precisão reduzida); "
+              "para projeto, discretizar em sub-bacias."
+              if metrics.area_km2 > 250 else None),
     )
 
     if st.button("Aplicar na Página 3 (Chuva-Vazão)", type="primary"):

@@ -174,12 +174,15 @@ elif metodo_escolhido.startswith("Racional"):
 else:
     metodo = "SCS-HU"
 
-if metodo.startswith("Modelo distribuido"):
+if area > 250.0:
     st.warning(
-        "Área > 250 km² — fora do escopo deste app. Use modelagem distribuída "
-        "(SWMM, HEC-HMS) com discretização de sub-bacias."
+        f"Área = {area:g} km² (> 250). O SCS-HU concentrado usa um hidrograma "
+        "unitário único pra bacia toda — acima de ~250 km² isso perde precisão "
+        "(a chuva deixa de ser uniforme e o tempo de viagem varia muito). Vale "
+        "como **estimativa preliminar**; para projeto, discretize em sub-bacias "
+        "(HEC-HMS, SWMM, ou ottobacias) e roteie. Você pode seguir mesmo assim.",
+        icon="⚠️",
     )
-    st.stop()
 
 
 # ---------------------------------------------------------------------------
@@ -293,5 +296,5 @@ else:  # SCS-HU
 
 st.success(
     "Chuva-vazão pronto. Prossiga para **4. Verificação de Seção**, "
-    "**5. Hidráulica** ou **6. Detenção**."
+    "**5. Hidráulica**, **6. Detenção** ou **7. Inundação 1D**."
 )

@@ -199,6 +199,7 @@ class BasinResult:
     metrics: BasinMetrics
     dem_utm_path: Path              # DEM reprojetado (fica no disco)
     work_dir: Path                  # diretorio de trabalho WBT
+    clipped_by_dem: bool = False    # True se a bacia encosta na borda do DEM (truncada)
 
 
 # ---------------------------------------------------------------------------
@@ -337,6 +338,7 @@ def delineate_basin(
     snap_dist_m: float = 200.0,
     stream_threshold: int = 100,
     work_dir: Path | None = None,
+    snap_method: str = "accumulation",
 ) -> BasinResult:
     """
     Delineia a bacia de contribuicao para um exutorio.
@@ -348,6 +350,11 @@ def delineate_basin(
     snap_dist_m : distancia maxima de snap ao canal (m).
     stream_threshold : numero minimo de celulas de acumulacao para canal.
     work_dir : diretorio temporario para artefatos WBT. Default = temp dir.
+    snap_method : como ajustar o exutorio ao canal.
+        "accumulation" (default) -> move pro pixel de MAIOR acumulacao no raio
+            (o rio principal). Robusto: nao depende do threshold de canal.
+        "jenson" -> move pro canal (stream) mais proximo. Respeita melhor a
+            intencao do clique, mas com threshold baixo gruda em corrego lateral.
     """
     if work_dir is None:
         work_dir = Path(tempfile.mkdtemp(prefix="basin_"))
@@ -450,12 +457,21 @@ def delineate_basin(
     outlet_shp = work_dir / "outlet.shp"
     outlet_utm.to_file(outlet_shp)
 
-    # 8. Snap
+    # 8. Snap do exutorio ao canal
     outlet_snapped_shp = work_dir / "outlet_snapped.shp"
-    _run("jenson_snap_pour_points", wbt.jenson_snap_pour_points,
-         out=outlet_snapped_shp,
-         pour_pts=str(outlet_shp), streams=streams,
-         output=str(outlet_snapped_shp), snap_dist=snap_dist_m)
+    if snap_method == "jenson":
+        _run("jenson_snap_pour_points", wbt.jenson_snap_pour_points,
+             out=outlet_snapped_shp,
+             pour_pts=str(outlet_shp), streams=streams,
+             output=str(outlet_snapped_shp), snap_dist=snap_dist_m)
+    else:
+        # "accumulation": move pro pixel de MAIOR acumulacao no raio (rio
+        # principal) — robusto ao threshold e ao tamanho do DEM, evita grudar
+        # num corrego lateral perto do exutorio.
+        _run("snap_pour_points", wbt.snap_pour_points,
+             out=outlet_snapped_shp,
+             pour_pts=str(outlet_shp), flow_accum=d8_acc,
+             output=str(outlet_snapped_shp), snap_dist=snap_dist_m)
 
     # 9. Watershed
     basin_rst = "basin.tif"
@@ -529,6 +545,23 @@ def delineate_basin(
     streams_4326 = streams_in_basin_utm.to_crs(epsg=4326)
     outlet_snapped_4326 = outlet_snapped_gdf_utm.to_crs(epsg=4326)
 
+    # Deteccao de corte: se a bacia encosta na borda do raster, ela foi
+    # provavelmente TRUNCADA pela extensao do DEM baixado (buffer pequeno) — o
+    # divisor de aguas real fica fora do DEM e a bacia sai com um lado reto.
+    clipped = False
+    try:
+        with rasterio.open(work_dir / basin_rst) as bsrc:
+            barr = bsrc.read(1)
+            bnod = bsrc.nodata
+        bmask = (barr > 0) if bnod is None else ((barr > 0) & (barr != bnod))
+        if bmask.any():
+            clipped = bool(
+                bmask[0, :].any() or bmask[-1, :].any()
+                or bmask[:, 0].any() or bmask[:, -1].any()
+            )
+    except Exception:
+        clipped = False
+
     return BasinResult(
         basin_gdf=basin_4326,
         stream_gdf=streams_4326,
@@ -537,6 +570,7 @@ def delineate_basin(
         metrics=metrics,
         dem_utm_path=dem_utm,
         work_dir=work_dir,
+        clipped_by_dem=clipped,
     )
 
 
