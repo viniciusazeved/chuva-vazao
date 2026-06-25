@@ -50,6 +50,10 @@ modulos_disponiveis = {
         "Inundação fluvial 1D (Página 7)",
         st.session_state.get("inu_resultado") is not None,
     ),
+    "distribuido": (
+        "Chuva-Vazão distribuído por sub-bacias (Página 3)",
+        st.session_state.get("distribuido_result") is not None,
+    ),
 }
 
 algum_modulo = any(disp for _, disp in modulos_disponiveis.values())
@@ -278,6 +282,23 @@ if st.button("Gerar PDF", type="primary"):
                 kwargs["inundacao_tabela"] = perfil.to_dataframe()
                 kwargs["fig_inundacao_mancha"] = plots.fig_mancha_hillshade(mancha)
                 kwargs["fig_inundacao_perfil"] = plots.plot_perfil_inundacao(perfil)
+
+        # Chuva-Vazao distribuido por sub-bacias
+        if modulos_selecionados.get("distribuido"):
+            dr = st.session_state.get("distribuido_result")
+            if dr is not None:
+                kwargs["distribuido"] = {
+                    k: dr.get(k) for k in (
+                        "Qpico_m3s", "t_pico_min", "volume_hm3", "arf", "TR",
+                        "duracao_h", "n_subbacias", "area_km2", "celeridade_ms",
+                        "fonte_cn",
+                    )
+                }
+                kwargs["distribuido_tabela"] = dr.get("tabela")
+                kwargs["fig_distribuido_hidrograma"] = dr.get("fig_hidrograma")
+                kwargs["fig_distribuido_mapa"] = dr.get("fig_mapa_cn")
+                kwargs["fig_distribuido_tc"] = dr.get("fig_tc")
+                kwargs["fig_distribuido_topologia"] = dr.get("fig_topologia")
 
         inputs = RelatorioInputs(**kwargs)
         pdf_bytes = gerar_relatorio_pdf(inputs)

@@ -138,6 +138,14 @@ class RelatorioInputs:
     fig_inundacao_mancha: object | None = None            # matplotlib Figure (hillshade + mancha)
     fig_inundacao_perfil: go.Figure | None = None         # perfil longitudinal (Plotly)
 
+    # ----- Modulo Chuva-Vazao Distribuido (sub-bacias, pagina 3) -----
+    distribuido: dict | None = None                       # Qp, t_pico, volume, ARF, TR, n, area, fonte_cn, celeridade
+    distribuido_tabela: pd.DataFrame | None = None        # parametros por sub-bacia (id, A, tc, CN)
+    fig_distribuido_hidrograma: go.Figure | None = None   # hidrograma no exutorio (Plotly)
+    fig_distribuido_mapa: go.Figure | None = None         # choropleth do CN por sub-bacia (Plotly)
+    fig_distribuido_tc: go.Figure | None = None           # choropleth do tc por sub-bacia (Plotly)
+    fig_distribuido_topologia: go.Figure | None = None    # rede / topologia das sub-bacias (Plotly)
+
 
 # ---------------------------------------------------------------------------
 # RelatorioPDF — fpdf2 estilizado
@@ -296,8 +304,20 @@ class RelatorioPDF(FPDF):
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
             tmp_path = Path(tmp.name)
         try:
-            # render alto pra ficar nitido na impressao
-            fig.write_image(str(tmp_path), width=1200, height=int(height_mm * 12), scale=2)
+            try:
+                # render alto pra ficar nitido na impressao
+                fig.write_image(str(tmp_path), width=1200, height=int(height_mm * 12), scale=2)
+            except Exception:  # noqa: BLE001
+                # kaleido ausente/descasado (comum no ambiente local) — degrada sem
+                # derrubar o PDF; as figuras saem normalmente no Streamlit Cloud.
+                self.set_font("Helvetica", "I", 8)
+                self.set_text_color(150, 150, 150)
+                self.multi_cell(0, 5, _latin1_safe(
+                    "[Grafico indisponivel neste ambiente local — gere o PDF no "
+                    "Streamlit Cloud para incluir as figuras.]"))
+                self.set_text_color(*COLOR_TEXT)
+                self.ln(2)
+                return
             x = MARGIN_LR + (USABLE_W - width_mm) / 2
             self.image(str(tmp_path), x=x, w=width_mm, h=height_mm)
             self.ln(4)
@@ -434,6 +454,8 @@ def _detectar_modulos(inputs: RelatorioInputs) -> list[str]:
         modulos.append("detencao")
     if inputs.inundacao is not None:
         modulos.append("inundacao")
+    if inputs.distribuido is not None:
+        modulos.append("distribuido")
     return modulos
 
 
@@ -444,6 +466,7 @@ _MODULO_NOMES = {
     "dimensionamento": "Dimensionamento Hidraulico de Conduto",
     "detencao": "Reservatorio de Detencao",
     "inundacao": "Inundacao Fluvial 1D",
+    "distribuido": "Chuva-Vazao Distribuido (sub-bacias)",
 }
 
 
@@ -897,6 +920,132 @@ def _render_inundacao(pdf: RelatorioPDF, inp: RelatorioInputs):
     )
 
 
+def _render_distribuido(pdf: RelatorioPDF, inp: RelatorioInputs):
+    d = inp.distribuido or {}
+    area = d.get("area_km2", 1) or 1
+    pdf.add_page()
+    pdf.add_section("Memorial - Chuva-Vazao Distribuido por Sub-bacias")
+
+    pdf.add_subsection("1. Justificativa e visao geral")
+    pdf.add_text(
+        "Acima de ~250 km2 o hidrograma unitario unico (modelo concentrado) perde "
+        "representatividade: a precipitacao deixa de ser uniforme sobre a bacia e o "
+        "tempo de viagem da agua varia muito entre as cabeceiras e o exutorio. "
+        "Adota-se entao um modelo SEMI-DISTRIBUIDO: a bacia e dividida em "
+        "sub-bacias, cada uma com seus proprios parametros (area, tempo de "
+        "concentracao e numero de curva); cada sub-bacia gera um hidrograma, que e "
+        "propagado pela rede de drenagem e somado aos demais nas confluencias, ate "
+        "o exutorio. As secoes seguintes documentam a cadeia completa de calculo."
+    )
+
+    pdf.add_subsection("2. Discretizacao da bacia e topologia de drenagem")
+    pdf.add_text(
+        "O modelo digital de elevacao e processado pelo WhiteboxTools: abertura de "
+        "depressoes (breach), direcao de fluxo D8, area de drenagem acumulada e "
+        "extracao da rede de canais por limiar de acumulacao. A rotina 'subbasins' "
+        "divide a bacia em uma sub-bacia por trecho de canal entre confluencias. A "
+        "topologia (qual sub-bacia deflui em qual) e reconstruida seguindo a "
+        "direcao D8 do pixel de saida de cada sub-bacia, gerando a arvore de "
+        "drenagem montante->jusante usada no roteamento. Resultado da discretizacao: "
+        f"{d.get('n_subbacias', 0)} sub-bacias, area total {area:.0f} km2."
+    )
+    if inp.fig_distribuido_topologia is not None:
+        pdf.add_subsection("Rede de drenagem e topologia")
+        pdf.add_figure(inp.fig_distribuido_topologia, height_mm=82)
+
+    pdf.add_subsection("3. Parametros por sub-bacia: tempo de concentracao e CN")
+    pdf.add_text(
+        "Tempo de concentracao (tc): media de tres formulas classicas - Kirpich "
+        "[tc = 0.0195 L^0.77 S^-0.385], Ven Te Chow e California Culverts "
+        "[tc = 57 (L^3/H)^0.385] - com L = comprimento do canal principal da "
+        "sub-bacia (ou estimativa de Hack, L = 1.4 A^0.6, quando maior) e H = "
+        "desnivel obtido do MDT por percentis (robusto a ruido). "
+        "Numero de curva (CN, metodo SCS): o uso e a ocupacao do solo vem do "
+        "MapBiomas e a textura do solo do SoilGrids; o grupo hidrologico segue a "
+        "adaptacao de Sartori et al. (2005) aos solos tropicais brasileiros - "
+        "Latossolos e Argissolos, argilosos mas bem estruturados e drenados, nao "
+        "sao penalizados como na classificacao por textura pura. Cada sub-bacia "
+        "recebe o CN ponderado pela sua area."
+    )
+    if inp.fig_distribuido_tc is not None:
+        pdf.add_subsection("Tempo de concentracao por sub-bacia")
+        pdf.add_figure(inp.fig_distribuido_tc, height_mm=80)
+    if inp.fig_distribuido_mapa is not None:
+        pdf.add_subsection("Numero de curva (CN) por sub-bacia")
+        pdf.add_figure(inp.fig_distribuido_mapa, height_mm=80)
+
+    pdf.add_subsection("4. Chuva de projeto e reducao de area (ARF)")
+    pdf.add_text(
+        "O hietograma de projeto e gerado a partir da equacao IDF do posto "
+        "[i = K TR^a / (t+b)^c] pelo metodo dos blocos alternados (Chicago). A "
+        "chuva pontual da IDF e convertida em chuva MEDIA sobre a bacia pelo fator "
+        "de reducao de area de Leclerc & Schaake (1972): "
+        "ARF = 1 - exp(-1.1 D^0.25) + exp(-1.1 D^0.25 - 0.01 A), com D em horas e A "
+        f"em km2. Para esta bacia: TR = {d.get('TR', 0):.0f} anos, duracao "
+        f"D = {d.get('duracao_h', 0):.1f} h, ARF = {d.get('arf', 1):.2f}. O mesmo "
+        "hietograma (ja reduzido) alimenta todas as sub-bacias - o ganho do modelo "
+        "distribuido vem do roteamento e do ARF, nao da variacao espacial da chuva."
+    )
+
+    pdf.add_subsection("5. Transformacao chuva-vazao (SCS)")
+    pdf.add_text(
+        "Em cada sub-bacia a chuva excedente e obtida pelo metodo SCS-CN: "
+        "S = 25400/CN - 254 (mm); abstracao inicial Ia = 0.2 S; escoamento "
+        "Pe = (P - Ia)^2 / (P - Ia + S) para P > Ia. A chuva excedente e convoluida "
+        "com o hidrograma unitario triangular do SCS - tempo de pico "
+        "tp = D/2 + 0.6 tc, tempo de base tb = 2.67 tp e vazao de pico "
+        "Qp = 0.208 A / tp - produzindo o hidrograma de cada sub-bacia. O fator de "
+        "pico (PRF, padrao 484) e ajustavel para bacias com maior armazenamento em "
+        "planicie de inundacao."
+    )
+
+    pdf.add_subsection("6. Propagacao na rede (Muskingum-Cunge)")
+    pdf.add_text(
+        "Os hidrogramas sao propagados de montante para jusante pela arvore de "
+        "drenagem. Em cada trecho aplica-se o metodo de Muskingum - "
+        "Q_out(t) = C0 I(t) + C1 I(t-1) + C2 Q_out(t-1) - com os coeficientes "
+        "derivados de K (tempo de viagem = comprimento do trecho / celeridade da "
+        "onda) e X (fator de ponderacao, 0.2-0.3 para rios naturais). A celeridade "
+        "e o principal parametro de calibracao do amortecimento: rios com planicie "
+        "de inundacao sao mais lentos e espalham mais o hidrograma. Nas confluencias "
+        "os hidrogramas sao somados; o resultado no exutorio e o hidrograma final."
+    )
+
+    pdf.add_subsection("7. Resultados")
+    pdf.add_kv_row([
+        ("Q de pico:", f"{d.get('Qpico_m3s', 0):.0f} m3/s"),
+        ("Tempo ao pico:", f"{d.get('t_pico_min', 0) / 60:.1f} h"),
+    ])
+    pdf.add_kv_row([
+        ("Volume escoado:", f"{d.get('volume_hm3', 0):.1f} hm3"),
+        ("Vazao especifica:", f"{d.get('Qpico_m3s', 0) / area:.2f} m3/s/km2"),
+    ])
+    pdf.add_kv_row([
+        ("Fonte do CN:", str(d.get("fonte_cn", "-"))),
+        ("Celeridade adotada:", f"{d.get('celeridade_ms', 0):.2f} m/s"),
+    ])
+    if inp.fig_distribuido_hidrograma is not None:
+        pdf.add_subsection("Hidrograma no exutorio")
+        pdf.add_figure(inp.fig_distribuido_hidrograma, height_mm=80)
+    if inp.distribuido_tabela is not None and len(inp.distribuido_tabela):
+        pdf.add_subsection("Parametros por sub-bacia")
+        df = inp.distribuido_tabela.copy()
+        if len(df) > 25:
+            df = df.iloc[:: max(1, len(df) // 25)].reset_index(drop=True)
+        pdf.add_dataframe(df)
+
+    pdf.add_subsection("8. Limitacoes e recomendacoes")
+    pdf.add_text(
+        "Modelo de evento, com chuva uniforme no espaco (a variabilidade espacial "
+        "da precipitacao real exigiria dados distribuidos de satelite ou radar). "
+        "Nao ha escoamento de base nem propagacao hidrodinamica 2D em planicie; o CN "
+        "e a celeridade concentram as incertezas e devem ser calibrados contra dados "
+        "observados (postos fluviometricos) quando disponiveis. Para cota de projeto "
+        "de obra, recomenda-se validacao contra modelagem hidrodinamica.",
+        size=8,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Referencias por modulo
 # ---------------------------------------------------------------------------
@@ -930,6 +1079,16 @@ _REFS_INUNDACAO = [
     ("Chow, V. T. (1959). Open-Channel Hydraulics. McGraw-Hill (cap. 10: standard "
      "step method)."),
 ]
+_REFS_DISTRIBUIDO = [
+    ("Sartori, A., Lombardi Neto, F. & Genovez, A. M. (2005). Classificacao "
+     "Hidrologica de Solos Brasileiros para a estimativa da chuva excedente com o "
+     "metodo do SCS. RBRH, 10(4)."),
+    ("Cunge, J. A. (1969). On the subject of a flood propagation computation method "
+     "(Muskingum method). Journal of Hydraulic Research, 7(2)."),
+    ("Leclerc, G. & Schaake, J. C. (1972). Derivation of hydrologic frequency "
+     "curves. Report 142, MIT, Cambridge."),
+    ("Lindsay, J. (2014). WhiteboxTools User Manual."),
+]
 
 
 def _render_referencias(pdf: RelatorioPDF, modulos: list[str]):
@@ -945,6 +1104,8 @@ def _render_referencias(pdf: RelatorioPDF, modulos: list[str]):
         refs += _REFS_BACIA
     if "inundacao" in modulos:
         refs += _REFS_INUNDACAO
+    if "distribuido" in modulos:
+        refs += _REFS_DISTRIBUIDO
 
     pdf.set_font("Helvetica", "", 8)
     pdf.set_text_color(*COLOR_TEXT)
@@ -986,6 +1147,8 @@ def gerar_relatorio_pdf(inputs: RelatorioInputs) -> bytes:
         _render_detencao(pdf, inputs)
     if "inundacao" in modulos:
         _render_inundacao(pdf, inputs)
+    if "distribuido" in modulos:
+        _render_distribuido(pdf, inputs)
 
     pdf.add_page()
     _render_referencias(pdf, modulos)
