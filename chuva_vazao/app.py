@@ -40,6 +40,15 @@ st.set_page_config(
     layout="wide",
 )
 
+# Largura fixa da sidebar: o Streamlit >=1.5x passou a "auto-alargar" a sidebar
+# (fica ~510 px no 1.56). Trava em 290 px para manter o layout estreito de antes,
+# consistente entre a versao local e a do Cloud.
+st.markdown(
+    "<style>[data-testid='stSidebar']{width:290px !important;"
+    "min-width:290px !important;max-width:290px !important;}</style>",
+    unsafe_allow_html=True,
+)
+
 
 # ---------------------------------------------------------------------------
 # Bootstrap session_state (valores padrao)

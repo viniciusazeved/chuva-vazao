@@ -462,8 +462,9 @@ def calcular_parametros(
     L[m]=1400*A_km2^0.6 (o maior, p/ nao explodir a declividade em cabeceira).
     ΔH = percentis 1-99 do DEM na sub-bacia (robusto a pixel espurio). tc = media
     de Kirpich/Chow/California. CN = interseccao area-ponderada com as ottobacias
-    da ANA se `bhae_path` for dado; sem o arquivo o CN fica None (fonte plugavel —
-    no Cloud entra o GEE).
+    da ANA se `bhae_path` for dado; quando nenhuma fonte fornece CN (sem BHAE,
+    sub-bacia sem cobertura ou GEE indisponivel) aplica-se `cn_default` (fonte
+    plugavel — no Cloud entra o GEE).
     """
     from chuva_vazao.tempo_concentracao import tempo_concentracao_completo  # noqa: PLC0415
 
@@ -521,8 +522,10 @@ def calcular_parametros(
         tc = max(tempo_concentracao_completo(L_km, delta_h).media_min, tc_min_floor)
         decl_pct = 100.0 * delta_h / L_m if L_m > 0 else 0.0
         cn_val = cn_por_sub.get(s.id)
-        if cn_val is None and bhae_path is not None:
-            cn_val = cn_default  # sub-bacia sem cobertura da ANA -> default
+        if cn_val is None:
+            # nenhuma fonte deu CN (sem BHAE, ou sub-bacia sem cobertura da ANA,
+            # ou GEE falhou nessa sub-bacia) -> aplica o default
+            cn_val = cn_default
         params[s.id] = ParametrosSubBacia(
             id=s.id, area_km2=s.area_km2, L_km=L_km, delta_h_m=delta_h,
             declividade_pct=decl_pct, tc_min=tc, metodo_L=metodo, cn=cn_val,

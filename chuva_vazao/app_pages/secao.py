@@ -53,6 +53,13 @@ def _bloco_extrair_mdt() -> None:
         ["Reaproveitar DEM da Página 0", "Upload de GeoTIFF (drone/topografia)"],
         horizontal=True,
         key="mdt_fonte",
+        help=(
+            "Escolhe de onde sai o terreno usado para amostrar os perfis das "
+            "seções: o DEM já carregado na Página 0 ou um GeoTIFF próprio "
+            "(drone/topografia). Para canais estreitos prefira um levantamento "
+            "fino; o DEM da Página 0 costuma ser Copernicus 30 m, que só resolve "
+            "rios e planícies largas."
+        ),
     )
 
     dem_path = None
@@ -70,6 +77,19 @@ def _bloco_extrair_mdt() -> None:
         up = st.file_uploader(
             "MDT (.tif/.tiff, qualquer CRS georreferenciado)",
             type=["tif", "tiff"], key="mdt_upload",
+            help=(
+                "Carrega o raster de terreno (.tif/.tiff) de onde os perfis "
+                "serão amostrados. Precisa ter CRS definido, idealmente "
+                "UTM/SIRGAS, senão a leitura falha. A resolução do MDT limita o "
+                "detalhe da seção: pixel grande achata o canal e transforma o "
+                "talude num degrau."
+            ),
+        )
+        st.caption(
+            "Resolução recomendada (ordem de grandeza): 0,5-2 m (drone/LiDAR) "
+            "para canais e seções de poucos metros; 5-10 m para rios médios; "
+            "30 m (Copernicus/SRTM) só para rios e planícies largas, onde numa "
+            "seção estreita o pixel vira quase um ponto só."
         )
         if up is not None:
             cache_dir = Path(st.session_state.get("_dem_cache_dir", "data/dems"))
@@ -109,8 +129,10 @@ def _bloco_extrair_mdt() -> None:
     with col_ctrl:
         n_amostras = st.number_input(
             "Amostras por seção", min_value=5, max_value=500, value=40, step=5,
-            help="Pontos equiespaçados ao longo de cada linha. ~40 dá uma "
-                 "seção editável sem poluir a tabela.",
+            help="Quantos pontos equiespaçados são amostrados ao longo de cada "
+                 "linha traçada. Mais pontos capturam melhor o microrrelevo "
+                 "(fundo e taludes), mas engordam a tabela. O espaçamento entre "
+                 "pontos vale comprimento_da_linha / (n - 1).",
         )
         st.caption(
             "Desenhe **3 linhas** com a ferramenta de polilinha (ícone no mapa), "
@@ -204,9 +226,33 @@ def _bloco_extrair_mdt() -> None:
         "Ajuste se o traçado não bateu."
     )
     c1, c2, c3 = st.columns(3)
-    sel_M = c1.selectbox("Montante", labels, index=ordem[0], key="mdt_sel_M")
-    sel_C = c2.selectbox("Central", labels, index=ordem[1], key="mdt_sel_C")
-    sel_J = c3.selectbox("Jusante", labels, index=ordem[2], key="mdt_sel_J")
+    sel_M = c1.selectbox(
+        "Montante", labels, index=ordem[0], key="mdt_sel_M",
+        help="Diz qual das 3 linhas desenhadas é a montante, a central e a "
+             "jusante. A ordem importa: a declividade do trecho sai da queda de "
+             "cota entre os thalwegs de montante e jusante, então inverter o "
+             "sentido faz a cota subir rio abaixo e a verificação trava com erro "
+             "(declividade não-positiva). O app já auto-ordena pela cota do "
+             "fundo e avisa se as três apontarem para a mesma linha.",
+    )
+    sel_C = c2.selectbox(
+        "Central", labels, index=ordem[1], key="mdt_sel_C",
+        help="Diz qual das 3 linhas desenhadas é a montante, a central e a "
+             "jusante. A ordem importa: a declividade do trecho sai da queda de "
+             "cota entre os thalwegs de montante e jusante, então inverter o "
+             "sentido faz a cota subir rio abaixo e a verificação trava com erro "
+             "(declividade não-positiva). O app já auto-ordena pela cota do "
+             "fundo e avisa se as três apontarem para a mesma linha.",
+    )
+    sel_J = c3.selectbox(
+        "Jusante", labels, index=ordem[2], key="mdt_sel_J",
+        help="Diz qual das 3 linhas desenhadas é a montante, a central e a "
+             "jusante. A ordem importa: a declividade do trecho sai da queda de "
+             "cota entre os thalwegs de montante e jusante, então inverter o "
+             "sentido faz a cota subir rio abaixo e a verificação trava com erro "
+             "(declividade não-positiva). O app já auto-ordena pela cota do "
+             "fundo e avisa se as três apontarem para a mesma linha.",
+    )
     idx_M, idx_C, idx_J = labels.index(sel_M), labels.index(sel_C), labels.index(sel_J)
 
     distintas = len({idx_M, idx_C, idx_J}) == 3
@@ -286,7 +332,17 @@ with col1:
         value=float(Q_pico_cenario),
         step=0.1,
         format="%.3f",
-        help=f"Padrão = pico do hidrograma ({Q_pico_cenario:.3f} m³/s).",
+        help="Vazão de pico que a seção precisa comportar; vem por padrão do "
+             f"pico do hidrograma da Página 3 ({Q_pico_cenario:.3f} m³/s). Quanto maior o Q, mais alta a "
+             "lâmina e a velocidade. É ele que define a lâmina normal (Manning) "
+             "e a crítica em cada seção; se a vazão extravasar a margem mais "
+             "baixa, a verificação acusa erro (não só um aviso).",
+    )
+    st.caption(
+        "Use o pico do TR adotado para o trecho. Como referência de TR (varia "
+        "por norma/manual): microdrenagem da ordem de 10 anos, macrodrenagem "
+        "25-100 anos, travessias/pontes e obras fluviais até 100 anos. O valor "
+        "em m3/s depende da bacia; confirme o TR no manual de drenagem aplicável."
     )
 
 with col2:
@@ -296,10 +352,21 @@ with col2:
         "Material / tipo de leito",
         list(materiais.keys()),
         index=1,  # "Rio em planicie - limpo, sinuoso..."
-        help="Naturais conforme Chow (1959), Tabela 5-6. Canalizados conforme DAEE/ABNT.",
+        help="Define a rugosidade do leito (coeficiente n de Manning) a partir "
+             "do tipo de revestimento ou da condição do rio. n maior = mais "
+             "atrito = menor velocidade e lâmina mais alta para a mesma vazão; "
+             "n menor (concreto/PVC liso) escoa mais rápido com lâmina menor. O "
+             "n resultante aparece no caption logo abaixo do seletor.",
     )
     n_manning = materiais[material]
     st.caption(f"n de Manning = {n_manning}")
+    st.caption(
+        "n de Manning típico: PVC/concreto liso 0,010-0,015; concreto "
+        "rugoso/alvenaria 0,015-0,025; gabião e canal de terra 0,025-0,035; "
+        "rio natural limpo 0,030-0,040; rio sinuoso com vegetação/pedras "
+        "0,050-0,075. Tubos corrugados (PVC/PEAD/metálico) ficam em "
+        "0,020-0,024, acima do liso."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -313,9 +380,10 @@ modo_entrada = st.radio(
     horizontal=True,
     key="modo_entrada_secao",
     help=(
-        "Lance os pontos à mão (ou via CSV) ou extraia os perfis de um MDT "
-        "desenhando as três linhas sobre o mapa — os pontos amostrados caem "
-        "nas tabelas abaixo para você revisar antes de verificar."
+        "Escolhe como você fornece a geometria: digitar ou colar os pontos "
+        "topográficos (N, E, Z) à mão (ou via CSV) ou amostrar os perfis de um "
+        "MDT desenhando 3 linhas no mapa. Nos dois casos os pontos caem nas "
+        "tabelas abaixo para revisar antes de verificar."
     ),
 )
 if modo_entrada.startswith("Extrair"):
@@ -393,6 +461,11 @@ with st.expander("📤 Carregar CSV unificado (formato: secao, N, E, Z)"):
     )
     arq = st.file_uploader(
         "CSV com `secao` ∈ {M, C, J}", type=["csv"], key="upload_secao",
+        help="Importa os pontos das três seções de uma vez (colunas secao, N, "
+             "E, Z; secao em M, C ou J). Use coordenadas em metros (UTM/SIRGAS): "
+             "lançar latitude/longitude em graus deixa a distância entre pontos "
+             "e a declividade do trecho erradas. O formato esperado está no "
+             "exemplo logo acima.",
     )
     if arq is not None:
         try:

@@ -32,7 +32,11 @@ Q_projeto = st.number_input(
     value=float(Q_pico_cenario),
     step=0.1,
     format="%.3f",
-    help=f"Padrão = Q_pico do hidrograma ({Q_pico_cenario:.3f} m³/s).",
+    help=(
+        "Vazão de pico que o conduto precisa transportar (m³/s). Vem do pico do "
+        f"hidrograma da Página 3 ({Q_pico_cenario:.3f} m³/s), mas você pode sobrescrever. Quanto maior a vazão, "
+        "maior a seção necessária (diâmetro ou box)."
+    ),
 )
 
 
@@ -42,22 +46,71 @@ Q_projeto = st.number_input(
 
 col1, col2, col3 = st.columns(3)
 with col1:
-    material = st.selectbox("Material", list(hd.MANNING_N.keys()), index=0)
+    material = st.selectbox(
+        "Material", list(hd.MANNING_N.keys()), index=0,
+        help=(
+            "Material da parede do conduto, que define o coeficiente de rugosidade n "
+            "de Manning (atrito interno). Material mais liso (n menor) dá maior "
+            "velocidade e vazão para a mesma seção e declividade; revestimentos "
+            "rugosos exigem seção maior. O valor de n adotado aparece logo abaixo do "
+            "campo."
+        ),
+    )
+    st.caption(
+        "n desta lista: 0,010 PVC liso; 0,013 concreto liso/manilha (padrão); "
+        "0,015 concreto rugoso, moldado in loco ou canal revestido; 0,020 a 0,024 "
+        "corrugados (PVC 0,020; PEAD 0,022; metálico 0,024); 0,025 pedra "
+        "argamassada; 0,027 gabião; 0,030 canal de terra."
+    )
     n = hd.MANNING_N[material]
     st.caption(f"n de Manning = {n}")
 with col2:
     S = st.number_input(
         "Declividade S (m/m)", min_value=0.0005, max_value=0.2,
         value=0.01, step=0.001, format="%.4f",
+        help=(
+            "Declividade longitudinal do fundo do conduto, em metro por metro "
+            "(0,01 = 1%). Na fórmula de Manning a vazão cresce com a raiz da "
+            "declividade: dobrar S aumenta a capacidade em cerca de 41%. Declividade "
+            "baixa reduz a velocidade e favorece sedimentação (o app alerta se a "
+            "velocidade ficar abaixo de 0,60 m/s)."
+        ),
+    )
+    st.caption(
+        "Faixas usuais em drenagem urbana: 0,3% a 5% (0,003 a 0,05 m/m). Para "
+        "garantir autolimpeza (velocidade ~0,60 m/s) costuma-se precisar de pelo "
+        "menos ~0,5% (0,005), dependendo da seção e do n. Acima de 5% (0,05) é "
+        "terreno íngreme, com risco de abrasão (o app alerta acima de 5 m/s). O "
+        "mínimo do campo, 0,0005 (0,05%), é válido mas raramente atende autolimpeza."
     )
 with col3:
     fator = st.number_input(
         "Fator de segurança", min_value=1.0, max_value=2.0,
         value=1.10, step=0.05,
+        help=(
+            "Multiplica a vazão de projeto antes de escolher a seção, criando folga "
+            "de capacidade. 1,10 dimensiona para 10% acima do pico. Valores maiores "
+            "levam a seções mais conservadoras. A lâmina e a velocidade de operação "
+            "mostradas são calculadas com a vazão SEM o fator. No modo Manual o fator "
+            "não altera o resultado, porque não há seleção automática de seção."
+        ),
+    )
+    st.caption(
+        "Faixas usuais: 1,10 a 1,20 em projetos correntes; 1,20 a 1,50 quando há "
+        "incerteza alta na vazão, assoreamento previsível ou obra crítica. Acima de "
+        "1,5 raramente se justifica. É critério de projeto, não norma fechada."
     )
 
 
-secao = st.radio("Seção", ["Circular (manilha)", "Retangular (celular)"], horizontal=True)
+secao = st.radio(
+    "Seção", ["Circular (manilha)", "Retangular (celular)"], horizontal=True,
+    help=(
+        "Geometria do conduto. Circular (manilha/tubo) é o padrão para galerias, com "
+        "diâmetros comerciais até 3,0 m. Retangular (bueiro celular/box) atende "
+        "vazões maiores ou travessias largas e baixas. A escolha troca a lista de "
+        "seções comerciais disponíveis abaixo."
+    ),
+)
 
 
 # ---------------------------------------------------------------------------
@@ -70,21 +123,50 @@ if secao.startswith("Circular"):
         n_linhas = st.number_input(
             "Nº de linhas em paralelo", min_value=1, max_value=10,
             value=1, step=1,
-            help="Ex: 3 manilhas Ø1000 mm. Q é dividida igualmente entre elas.",
+            help=(
+                "Quantidade de tubos idênticos em paralelo; a vazão de projeto é "
+                "dividida igualmente entre eles (Q por linha = Q/N). Mais linhas "
+                "permitem diâmetros menores, mas multiplicam a obra (mais valas e "
+                "mais tubos)."
+            ),
         )
     with col2:
         modo = st.radio(
             "Modo", ["Auto", "Manual"], horizontal=True,
-            help="Auto: escolhe o menor diâmetro comercial. Manual: você escolhe.",
+            help=(
+                "Auto: o app busca o menor diâmetro comercial cuja lâmina de operação "
+                "fique dentro do limite definido. Manual: você fixa o diâmetro e o app "
+                "só verifica se atende, avisando se a lâmina ultrapassa o limite."
+            ),
         )
     with col3:
-        lamina_max = st.slider("Lâmina máxima (% do diâmetro)", 50, 100, 80) / 100.0
+        lamina_max = st.slider(
+            "Lâmina máxima (% do diâmetro)", 50, 100, 80,
+            help=(
+                "Limite de enchimento do tubo: fração do diâmetro que a água pode "
+                "ocupar na vazão de dimensionamento. 80% mantém superfície livre e "
+                "folga de ventilação. Quanto mais perto de 100%, mais o conduto se "
+                "aproxima da seção plena, sem margem."
+            ),
+        ) / 100.0
+        st.caption(
+            "Faixa usual em galerias circulares com superfície livre: 75% a 85% do "
+            "diâmetro (DAEE/ABNT), padrão 80%. Subir além disso rende pouco: a vazão "
+            "máxima do tubo ocorre por volta de 94% de enchimento (e a velocidade "
+            "máxima por volta de 81%), e perde-se ventilação."
+        )
 
     if modo == "Manual":
         diametros_mm = [int(round(d * 1000)) for d in hd.COMMERCIAL_DIAMETERS_M]
         D_mm = st.selectbox(
             "Diâmetro comercial (mm)", diametros_mm,
             index=diametros_mm.index(1000) if 1000 in diametros_mm else 0,
+            help=(
+                "Diâmetro nominal do tubo, escolhido da lista comercial. O app calcula "
+                "a lâmina e a velocidade de operação para esse diâmetro e avisa se a "
+                "lâmina ultrapassa o limite. Diâmetro maior reduz a lâmina e a "
+                "velocidade."
+            ),
         )
         D_m = D_mm / 1000.0
         try:
@@ -197,15 +279,36 @@ else:
         n_linhas = st.number_input(
             "Nº de células em paralelo", min_value=1, max_value=10,
             value=1, step=1,
-            help="Ex: 2 boxes 2.0×2.0 m. Q é dividida igualmente.",
+            help=(
+                "Quantidade de células (boxes) idênticas em paralelo; a vazão de "
+                "projeto é dividida igualmente entre elas (Q por célula = Q/N). Mais "
+                "células permitem seções individuais menores, mas aumentam a largura "
+                "total da obra."
+            ),
         )
     with col2:
         modo = st.radio(
             "Modo", ["Auto", "Manual"], horizontal=True,
-            help="Auto: menor box comercial. Manual: você escolhe da lista.",
+            help=(
+                "Auto: o app busca a menor seção comercial (por área) cuja lâmina de "
+                "operação fique dentro do limite. Manual: você fixa a seção B×H e o app "
+                "só verifica se atende, avisando se a lâmina ultrapassa o limite."
+            ),
         )
     with col3:
-        lamina_max = st.slider("Lâmina máxima (% da altura)", 50, 100, 85) / 100.0
+        lamina_max = st.slider(
+            "Lâmina máxima (% da altura)", 50, 100, 85,
+            help=(
+                "Limite de enchimento do box: fração da altura que a água pode ocupar "
+                "na vazão de dimensionamento; o resto é borda livre. 85% deixa cerca "
+                "de 15% de folga no topo. Quanto maior o valor, menor a borda livre."
+            ),
+        ) / 100.0
+        st.caption(
+            "Faixa usual em bueiros celulares: 80% a 90% da altura, deixando 10% a "
+            "20% de borda livre, padrão 85%. Travessias sob rodovia tendem a adotar "
+            "folga maior (limite inferior). É critério de projeto."
+        )
 
     if modo == "Manual":
         secoes_lbl = [f"{b:.1f} × {h:.1f} m" for b, h in hd.COMMERCIAL_BOX_SECTIONS_M]
@@ -213,6 +316,13 @@ else:
             "Seção comercial (B × H)", range(len(secoes_lbl)),
             format_func=lambda i: secoes_lbl[i],
             index=secoes_lbl.index("2.0 × 2.0 m") if "2.0 × 2.0 m" in secoes_lbl else 0,
+            help=(
+                "Seção retangular (largura × altura) escolhida da lista de boxes "
+                "comerciais. O app calcula a lâmina e a velocidade de operação e avisa "
+                "se a lâmina excede o limite. Seção maior reduz a lâmina e a "
+                "velocidade. No modo Auto, as seções são percorridas em ordem de área "
+                "crescente."
+            ),
         )
         b_sel, h_sel = hd.COMMERCIAL_BOX_SECTIONS_M[idx]
         try:

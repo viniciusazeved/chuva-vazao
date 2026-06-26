@@ -37,10 +37,11 @@ with col_datum1:
         "Datum vertical (rótulo de projeto)",
         value="Imbituba (SGB) — IBGE",
         help=(
-            "Apenas anotação para o relatório. SIRGAS 2000 é estritamente "
-            "datum horizontal — para cotas verticais oficiais use Imbituba "
-            "(SGB), SGB-S (nova realização IBGE) ou EGM2008 quando partir "
-            "de DEMs como Copernicus GLO-30."
+            "Apenas rótulo para o relatório; não entra no cálculo. SIRGAS "
+            "2000 é datum horizontal — para cotas verticais use Imbituba "
+            "(SGB), a realização vertical mais recente do IBGE, ou EGM2008 "
+            "quando as cotas vierem de DEM como o Copernicus GLO-30 (que já "
+            "é referido ao EGM2008)."
         ),
     )
 with col_datum2:
@@ -48,7 +49,14 @@ with col_datum2:
         "Cota do fundo z₀ (m)",
         min_value=-100.0, max_value=5000.0,
         value=100.0, step=0.10,
-        help="Cota absoluta do fundo do reservatório no datum escolhido.",
+        help=(
+            "Cota do ponto mais baixo do reservatório (leito), em metros no "
+            "datum vertical do projeto. Não altera a atenuação nem o "
+            "roteamento: o cálculo usa só a altura relativa h. Este valor "
+            "apenas posiciona as cotas absolutas (orifício, vertedor, NA "
+            "máx) nos gráficos e no relatório. No modo DEM in-line ele pode "
+            "ser sobrescrito pela cota que o DEM lê no ponto da barragem."
+        ),
     )
 
 
@@ -66,10 +74,11 @@ modo = st.radio(
     ],
     horizontal=False,
     help=(
-        "Prismático assume Aw constante. Manual: você cola pontos (z, V) "
-        "vindos de levantamento topográfico ou voo de drone. DEM in-line: "
-        "clica no ponto da barragem e o app faz flood-fill na bacia da "
-        "página 0 para gerar a curva e a mancha de inundação."
+        "Escolhe como descrever a geometria. Prismático: área do espelho "
+        "constante com a altura (S = Aw·h), bom para pré-dimensionamento. "
+        "Curva cota×volume: você fornece pares (cota, volume) de topografia "
+        "ou drone. DEM in-line: o app gera a curva e a mancha por flood-fill "
+        "no DEM da Página 0."
     ),
 )
 
@@ -88,13 +97,36 @@ if modo == "Prismático (área constante)":
             "Área superficial Aw (m²)",
             min_value=10.0, max_value=1_000_000.0,
             value=5000.0, step=100.0,
-            help="Prismático — área constante com a altura.",
+            help=(
+                "Área do espelho d'água, suposta constante com a altura no "
+                "modo prismático (volume S = Aw·h). Aw maior armazena mais "
+                "volume por metro de lâmina e atenua mais o pico, atingindo "
+                "menor altura para o mesmo hidrograma afluente."
+            ),
+        )
+        st.caption(
+            "Sai do volume de detenção exigido dividido pela altura útil "
+            "(Aw ≈ V_req / h_máx). Ordens de grandeza típicas, a verificar "
+            "no caso local: ~200-2.000 m² (lote/microdrenagem); ~2.000-20.000 "
+            "m² (loteamento/quadra); acima de ~20.000 m² (sub-bacia)."
         )
     with col2:
         h_max = st.number_input(
             "Altura máxima h_max (m)", min_value=0.5, max_value=20.0,
             value=4.0, step=0.1,
-            help=f"Cota absoluta do NA máx = {z_fundo + 4.0:.2f} m (referência).",
+            help=(
+                "Profundidade máxima de água acima do fundo (volume útil mais "
+                "borda livre). Define até onde o roteamento pode subir antes "
+                "de saturar e marcar extravasamento. h_máx maior aumenta o "
+                "amortecimento, mas exige barramento/talude mais alto e mais "
+                "borda livre."
+            ),
+        )
+        st.caption(
+            "Ordens de grandeza de manuais de drenagem urbana, a verificar no "
+            "caso local: ~1-3 m em bacias secas, por segurança; ~3-6 m em "
+            "reservatórios maiores; acima de ~6 m já entra no domínio de "
+            "barragens, com projeto e licenciamento próprios."
         )
     z_max_abs = z_fundo + h_max
 
@@ -189,22 +221,81 @@ else:  # "Gerar do DEM (in-line, GEE)"
 
     col_map, col_ctrl = st.columns([4, 1])
     with col_ctrl:
-        bar_lat = st.number_input("Lat barragem", -90.0, 90.0, float(bar_lat), 0.0001, format="%.6f")
-        bar_lon = st.number_input("Lon barragem", -180.0, 180.0, float(bar_lon), 0.0001, format="%.6f")
+        bar_lat = st.number_input(
+            "Lat barragem", -90.0, 90.0, float(bar_lat), 0.0001, format="%.6f",
+            help=(
+                "Latitude do ponto onde a barragem cruza o talvegue (eixo "
+                "in-line, assumido vertical). Em geral você define clicando "
+                "no mapa; o flood-fill por cota parte deste pixel para "
+                "montante. Mover o ponto muda a bacia represada e, com ela, "
+                "a curva cota-volume e a mancha."
+            ),
+        )
+        bar_lon = st.number_input(
+            "Lon barragem", -180.0, 180.0, float(bar_lon), 0.0001, format="%.6f",
+            help=(
+                "Longitude do ponto da barragem (eixo in-line). Normalmente "
+                "definida pelo clique no mapa; o flood-fill por cota arranca "
+                "deste pixel. Reposicionar altera a bacia represada, a curva "
+                "cota-volume e a mancha gerada."
+            ),
+        )
         delta_h_max = st.number_input(
             "Altura máx do barramento Δh (m)",
             0.5, 100.0, 10.0, 0.5,
-            help="Cota máx do NA = z_pixel_da_barragem + Δh.",
+            help=(
+                "Altura máxima da barragem acima do leito no ponto; define a "
+                "cota até onde o app inunda o DEM (z_máx = cota do pixel da "
+                "barragem + Δh). Δh maior gera reservatório e mancha maiores "
+                "e estende a curva cota-volume para cima."
+            ),
         )
-        n_pontos = st.number_input("Nº de pontos da curva", 5, 60, 20, 1)
+        st.caption(
+            "Ordem de grandeza por tipo de obra, a verificar no caso local: "
+            "detenção in-line em lote/canal ~2-5 m; pequena barragem/CGH "
+            "~5-15 m. Acima de ~15 m costuma cair no enquadramento de "
+            "barragens (Lei 12.334/PNSB), com projeto e licenciamento "
+            "específicos."
+        )
+        n_pontos = st.number_input(
+            "Nº de pontos da curva", 5, 60, 20, 1,
+            help=(
+                "Quantidade de cotas igualmente espaçadas entre o fundo e "
+                "z_máx em que o flood-fill calcula área e volume. Mais pontos "
+                "suavizam a curva cota-volume, mas pesam o processamento (cada "
+                "cota refaz a busca de pixels conectados). Não mudam a física, "
+                "só a resolução da curva."
+            ),
+        )
         usar_clip = st.checkbox(
             "Lago existente — definir piso do leito", value=False,
-            help="Se já há reservatório no ponto, o DEM mostra a lâmina d'água, não o leito real. Use o piso pra clipar.",
+            help=(
+                "Marque se já existe lâmina d'água no ponto: o DEM enxerga a "
+                "superfície da água, não o leito, o que falsearia o fundo e o "
+                "volume. Ativando, você informa o piso do leito e o app usa "
+                "esse valor como fundo do flood-fill."
+            ),
         )
         z_min_clip = (
-            st.number_input("Piso do leito z_min (m)", -100.0, 5000.0, float(z_fundo), 0.1)
+            st.number_input(
+                "Piso do leito z_min (m)", -100.0, 5000.0, float(z_fundo), 0.1,
+                help=(
+                    "Cota presumida do leito sob a lâmina d'água existente. O "
+                    "app adota esse valor como fundo do reservatório; pixels do "
+                    "DEM abaixo dele são elevados a esse piso (não descartados), "
+                    "de modo que o volume passa a ser medido acima do leito "
+                    "presumido. Use a cota de fundo de projeto ou de batimetria; "
+                    "um piso mais alto reduz o volume calculado."
+                ),
+            )
             if usar_clip else None
         )
+        if usar_clip:
+            st.caption(
+                "Entre a cota da lâmina d'água que o DEM enxerga (limite "
+                "superior) e a cota de fundo de projeto/batimetria (limite "
+                "inferior real). Definido pelo dado de campo, sem faixa fixa."
+            )
         gerar_btn = st.button("Gerar curva", type="primary")
 
     with col_map:
@@ -371,9 +462,52 @@ with col1:
         max_value=float(z_max_abs),
         value=float(z_fundo),
         step=0.05,
+        help=(
+            "Cota a partir da qual o orifício de fundo começa a descarregar "
+            "(carga efetiva h_ef = NA − cota do orifício). Em geral fica no "
+            "fundo (z₀) para esvaziar o reservatório por completo. Elevá-la "
+            "cria volume morto abaixo do orifício e atrasa o início da vazão "
+            "efluente. A UI limita o valor ao intervalo [z₀, z_máx]."
+        ),
     )
-    d_orif = st.number_input("Diâmetro do orifício (m)", 0.05, 3.0, 0.30, 0.05)
-    Cd = st.number_input("Cd orifício", 0.4, 0.9, 0.61, 0.01)
+    st.caption(
+        "Padrão: igual à cota do fundo (descarga de fundo, esvazia tudo). "
+        "Acima do fundo só para reter volume permanente (bacia úmida) ou "
+        "tratamento de qualidade da água."
+    )
+    d_orif = st.number_input(
+        "Diâmetro do orifício (m)", 0.05, 3.0, 0.30, 0.05,
+        help=(
+            "Diâmetro do orifício de fundo, principal dispositivo que limita "
+            "a vazão efluente à de pré-desenvolvimento. A descarga cresce com "
+            "o quadrado do diâmetro (Q ∝ d²): orifício maior libera mais "
+            "vazão, amortece menos o pico e exige menos volume; menor amortece "
+            "mais, mas eleva o NA e pode acionar o vertedor. Não há campo "
+            "separado de vazão-alvo: ela é imposta pelo par (diâmetro, Cd) e "
+            "pela cota do orifício."
+        ),
+    )
+    st.caption(
+        "Resultado do dimensionamento à vazão de pré-desenvolvimento, não um "
+        "valor tabelado. Invertendo a equação do orifício (Cd=0,61, carga "
+        "h≈1,5 m): Q≈0,2 m³/s → d≈0,28 m; Q≈0,5 → d≈0,44 m; Q≈1,0 → d≈0,62 m; "
+        "Q≈2,0 → d≈0,88 m. d cresce com a raiz de Q e depende da carga: menos "
+        "carga exige diâmetro maior."
+    )
+    Cd = st.number_input(
+        "Cd orifício", 0.4, 0.9, 0.61, 0.01,
+        help=(
+            "Coeficiente de descarga do orifício: fração da vazão teórica que "
+            "efetivamente escoa, função da geometria da borda. Q é "
+            "proporcional a Cd. Para orifício de borda viva em parede fina, "
+            "0,61 é o valor consagrado."
+        ),
+    )
+    st.caption(
+        "Borda viva / parede fina: 0,60-0,62 (padrão 0,61); bocal ou tubo "
+        "curto: ~0,80; entrada bem arredondada (bell-mouth): 0,90-0,98. A "
+        "faixa do campo (0,40-0,90) cobre do orifício à boca arredondada."
+    )
 with col2:
     st.markdown("**Vertedor de emergência**")
     z_vert_abs = st.number_input(
@@ -382,9 +516,49 @@ with col2:
         max_value=float(z_max_abs),
         value=float(z_fundo + 0.75 * h_max),
         step=0.05,
+        help=(
+            "Cota da soleira do vertedor de emergência: abaixo dela só o "
+            "orifício descarrega; acima, o vertedor entra para evitar "
+            "galgamento. Soleira mais alta deixa mais volume útil para "
+            "amortecer antes do extravasamento, mas reduz a borda livre. O "
+            "padrão fica a 75% de h_máx acima do fundo. A UI limita o valor "
+            "ao intervalo [z₀, z_máx]."
+        ),
     )
-    b_vert = st.number_input("Largura do vertedor (m)", 0.1, 50.0, 3.0, 0.1)
-    Cw = st.number_input("Cw vertedor", 1.5, 2.2, 1.85, 0.05)
+    st.caption(
+        "Tipicamente 60-85% de h_máx acima do fundo (padrão 75%), deixando "
+        "borda livre de ~0,3-0,5 m até o NA máximo."
+    )
+    b_vert = st.number_input(
+        "Largura do vertedor (m)", 0.1, 50.0, 3.0, 0.1,
+        help=(
+            "Largura da soleira do vertedor de emergência. A descarga é "
+            "proporcional à largura (Q = Cw·b·h^1,5): vertedor mais largo "
+            "escoa a cheia excedente com menor carga sobre a soleira, baixando "
+            "o NA máximo; mais estreito eleva a lâmina e o risco de "
+            "galgamento."
+        ),
+    )
+    st.caption(
+        "Dimensione para passar a cheia excedente dentro da borda livre. "
+        "Ordem de grandeza, a verificar no caso local: ~1-5 m em bacias "
+        "urbanas; ~5-20 m em reservatórios maiores."
+    )
+    Cw = st.number_input(
+        "Cw vertedor", 1.5, 2.2, 1.85, 0.05,
+        help=(
+            "Coeficiente de vazão do vertedor na forma Q = Cw·b·h^1,5; embute "
+            "o tipo de soleira. Cw maior significa mais vazão para a mesma "
+            "carga. O padrão 1,85 corresponde a vertedor retangular de soleira "
+            "delgada (chapa)."
+        ),
+    )
+    st.caption(
+        "Soleira delgada (chapa, borda viva): ~1,84-1,86 (padrão 1,85); "
+        "soleira espessa / canal de terra: ~1,55-1,70; perfil ogee/Creager: "
+        "~2,0-2,2. A equação Q=(2/3)·Cd·√(2g)·b·h^1,5 com Cd≈0,62 dá Cw≈1,83, "
+        "próximo do padrão. A faixa do campo (1,5-2,2) cobre os três tipos."
+    )
 
 
 # Converte cotas absolutas em alturas relativas (a base do reservatorio na engine

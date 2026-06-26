@@ -49,8 +49,17 @@ def _render_calc_gee_auto(metodo: str):
             "Fonte LULC",
             ["mapbiomas (30 m, Brasil)", "dynamic_world (10 m, global)"],
             index=0,
+            help="Mapa de uso e cobertura do solo usado para estimar C e CN. "
+            "MapBiomas é 30 m e calibrado para o Brasil (recomendado); Dynamic "
+            "World é 10 m e global, útil para detalhe fino em área urbana, mas "
+            "menos aderente às classes brasileiras.",
         )
-        ano = col2.number_input("Ano LULC", 2017, 2024, 2023, 1)
+        ano = col2.number_input(
+            "Ano LULC", 2017, 2024, 2023, 1,
+            help="Ano do mapa de uso do solo. Use o ano mais recente disponível "
+            "ou o do cenário que quer representar; anos antigos refletem menos "
+            "urbanização e tendem a dar C e CN menores.",
+        )
         calc_btn = col3.button("Calcular do GEE", type="primary")
 
         fonte_key = "mapbiomas" if fonte.startswith("mapbiomas") else "dynamic_world"
@@ -124,49 +133,168 @@ def _render_distribuido(area_km2: float):
         return
 
     c1, c2, c3 = st.columns(3)
-    TR_in = c1.number_input("TR (anos)", 2, 1000, int(TR), 1)
-    D_h = c2.number_input("Duração da chuva (h)", 1.0, 72.0, 12.0, 1.0)
-    dt_min = c3.number_input("Passo dt (min)", 5, 120, 30, 5)
+    TR_in = c1.number_input(
+        "TR (anos)", 2, 1000, int(TR), 1,
+        help="Período de retorno da chuva de projeto: de quantos em quantos anos, "
+        "em média, o evento é igualado ou superado. Maior TR significa chuva mais "
+        "intensa pela IDF e vazão de pico maior. Escolha conforme o porte e o risco "
+        "da obra.",
+    )
+    c1.caption(
+        "Prática de drenagem: microdrenagem (sarjetas, galerias) 2 a 10 anos; "
+        "macrodrenagem e canais 25 a 100; travessias e bueiros rodoviários 50 a "
+        "100; grandes estruturas (vertedouros, barragens) 100 a 1000 (o campo "
+        "aceita até 1000)."
+    )
+    D_h = c2.number_input(
+        "Duração da chuva (h)", 1.0, 72.0, 12.0, 1.0,
+        help="Duração total da chuva de projeto. Para captar o pico, use duração "
+        "pelo menos igual ao tempo de concentração da bacia; em bacias grandes (tc "
+        "de várias horas) use durações longas. A duração também entra no ARF: "
+        "durações maiores reduzem menos a chuva pontual.",
+    )
+    c2.caption(
+        "Regra prática: D ≈ tc da bacia, ou um pouco maior. Ordem de grandeza: "
+        "bacias de dezenas de km² 3 a 6 h; centenas de km² 6 a 24 h; milhares de "
+        "km² 24 a 48 h."
+    )
+    dt_min = c3.number_input(
+        "Passo dt (min)", 5, 120, 30, 5,
+        help="Passo de tempo da simulação (hietograma, hidrógrafa unitária e "
+        "roteamento). Menor dt resolve melhor o pico, ao custo de mais "
+        "processamento; não altera o volume escoado, só a resolução da curva.",
+    )
+    c3.caption(
+        "Tipicamente 5 a 30 min em bacias urbanas e médias, 15 a 60 min em bacias "
+        "grandes. Como referência numérica, evite dt maior que ~1/5 do tc da menor "
+        "sub-bacia, senão o pico tende a ser subestimado."
+    )
     c4, c5, c6 = st.columns(3)
-    thr = c4.number_input("Discretização (células de canal)", 2000, 60000, 12000, 1000,
-                          help="Menor = mais sub-bacias.")
-    metodo_h = c5.selectbox("Hietograma", ["blocos", "huff"])
-    X_musk = c6.number_input("X (Muskingum)", 0.0, 0.5, 0.25, 0.05,
-                             help="0.25 típico de rio natural; 0.5 = translação pura (sem atenuação).")
+    thr = c4.number_input(
+        "Discretização (células de canal)", 2000, 60000, 12000, 1000,
+        help="Número de células acumuladas a montante para iniciar um canal. "
+        "Controla quão fina é a divisão em sub-bacias: valor menor cria mais canais "
+        "e mais sub-bacias (modelo mais detalhado e mais lento); valor maior agrupa "
+        "em poucas sub-bacias grandes. Não muda a bacia total, só o nível de "
+        "detalhe interno.",
+    )
+    c4.caption(
+        "A área-limiar para iniciar um canal é células × área do pixel. Com DEM de "
+        "~30 m (pixel ≈ 0,0009 km²): 12.000 ≈ 10,8 km²; 2.000 ≈ 1,8 km²; 60.000 ≈ "
+        "54 km². Com DEM mais grosso (ex.: 90 m) multiplique por ~9. Mire numa "
+        "discretização de poucas dezenas de sub-bacias."
+    )
+    metodo_h = c5.selectbox(
+        "Hietograma", ["blocos", "huff"],
+        help="Como a chuva total é distribuída ao longo da duração. 'blocos' "
+        "(blocos alternados, tipo Chicago) concentra a intensidade no centro e "
+        "tende a dar pico mais alto; 'huff' usa as curvas estatísticas de Huff (2º "
+        "quartil) e em geral suaviza o pico. O volume total é o mesmo nos dois.",
+    )
+    X_musk = c6.number_input(
+        "X (Muskingum)", 0.0, 0.5, 0.25, 0.05,
+        help="Fator de ponderação entre vazão de entrada e de saída no "
+        "armazenamento do trecho (Muskingum). Controla quanto o trecho atenua o "
+        "pico: 0 = máxima atenuação (atua como reservatório linear); 0,5 = "
+        "translação pura, a onda passa sem amortecer.",
+    )
+    c6.caption(
+        "Rios naturais com planície de inundação: 0,2 a 0,3. Canais regulares ou "
+        "retificados, próximos da translação pura: 0,4 a 0,5. Use 0 só para "
+        "reservatório ou lago. Faixa física válida 0 a 0,5."
+    )
     c7, c8 = st.columns(2)
-    arf_auto = c7.checkbox("ARF automático (Leclerc-Schaake)", value=True)
-    arf_manual = None if arf_auto else float(c8.number_input("ARF manual", 0.1, 1.0, 0.85, 0.01))
+    arf_auto = c7.checkbox(
+        "ARF automático (Leclerc-Schaake)", value=True,
+        help="Liga o cálculo automático do fator de redução de área (ARF), que "
+        "converte a chuva pontual da IDF na chuva média sobre a bacia inteira. "
+        "Marcado: usa a fórmula de Leclerc-Schaake, função da área e da duração. "
+        "Desmarcado: você informa o ARF à mão no campo ao lado.",
+    )
+    arf_manual = None
+    if not arf_auto:
+        arf_manual = float(c8.number_input(
+            "ARF manual", 0.1, 1.0, 0.85, 0.01,
+            help="Fator de redução de área informado à mão: multiplica a chuva "
+            "pontual para obter a chuva média na bacia. 1,0 = sem redução (bacias "
+            "pequenas); valores menores reduzem a chuva e o pico em bacias grandes, "
+            "onde a tempestade não cobre tudo com a mesma intensidade.",
+        ))
+        c8.caption(
+            "Tipicamente 0,80 a 0,95 para bacias de dezenas a centenas de km² (pela "
+            "fórmula do app, A=300 km² dá ~0,88 em 12 h e ~0,91 em 24 h). Cai abaixo "
+            "de 0,70 só em bacias muito grandes com chuvas curtas. 1,0 = sem "
+            "abatimento. Confira contra o ARF automático antes de fixar."
+        )
     fonte_cn = st.selectbox(
         "Fonte do CN por sub-bacia",
         ["GEE (MapBiomas + SoilGrids)", "ANA (BHAE local)", "Manual (calibração)"],
-        help="GEE: CN próprio de cada sub-bacia via MapBiomas + solo — consistente "
-             "com o Racional/SCS concentrado e roda no Cloud. ANA: ottobacias do "
-             "BHAE (arquivo local de 5,6 GB). Manual: um CN único pra calibrar.",
+        help="Define de onde vem o CN de cada sub-bacia. GEE: calcula via "
+        "MapBiomas + solo (espacializado, roda no Cloud, coerente com o Racional/"
+        "SCS concentrado). ANA: usa o CN das ottobacias do BHAE local (arquivo de "
+        "~5,6 GB, não roda no Cloud). Manual: força um único CN em todas, útil para "
+        "calibrar.",
     )
     c9, c10 = st.columns(2)
     cn_manual_in, ano_lulc, bhae = 0.0, 2023, "data/BHAE_CN2022.gpkg"
     if fonte_cn.startswith("Manual"):
         cn_manual_in = c9.number_input(
-            "CN manual", 1.0, 100.0, 72.0, 1.0,
-            help="Força um CN único em todas as sub-bacias (ex.: 72 calibrado p/ o Bananal).",
+            "CN manual", 30.0, 100.0, 72.0, 1.0,
+            help="CN do SCS único aplicado a todas as sub-bacias. Resume solo e uso "
+            "do solo num índice: maior CN significa solo mais impermeável ou "
+            "saturado, mais escoamento (S = 25400/CN − 254) e pico maior. 72 foi o "
+            "valor calibrado para o Bananal.",
+        )
+        c9.caption(
+            "CN típico em umidade média (AMC II): floresta em solo bem drenado 30 a "
+            "60; pasto e campo 50 a 80; agricultura 65 a 90; urbano 60 a 90; "
+            "superfícies quase impermeáveis ~98. Abaixo de 30 não tem sentido "
+            "físico, por isso o mínimo aqui é 30 (como no SCS-HU concentrado)."
         )
     elif fonte_cn.startswith("GEE"):
-        ano_lulc = c9.number_input("Ano do MapBiomas", 2017, 2024, 2023, 1)
+        ano_lulc = c9.number_input(
+            "Ano do MapBiomas", 2017, 2024, 2023, 1,
+            help="Ano do mapa MapBiomas usado para calcular o CN de cada sub-bacia. "
+            "Use o ano mais recente disponível ou o do cenário desejado; anos "
+            "antigos têm menos área urbana e tendem a CN menor.",
+        )
         c10.caption("Calcula o CN de cada sub-bacia via GEE (1 consulta por sub-bacia "
                     "— mais lento, mas espacializado e Cloud-ready).")
     else:  # ANA
-        bhae = c10.text_input("Arquivo de CN da ANA", value="data/BHAE_CN2022.gpkg",
-                              help="GeoPackage de ottobacias com CN2.")
+        bhae = c10.text_input(
+            "Arquivo de CN da ANA", value="data/BHAE_CN2022.gpkg",
+            help="Caminho do GeoPackage de ottobacias da ANA (BHAE) com o campo de "
+            "CN (CN2.ANA_med). O modelo cruza cada sub-bacia com essas ottobacias e "
+            "pondera o CN pela área de interseção. Arquivo local de ~5,6 GB, não "
+            "disponível no Cloud. Se uma sub-bacia não for coberta pelas ottobacias, "
+            "recebe CN 70 nos trechos sem dado. Se o arquivo não for encontrado, a "
+            "rodada por esta fonte falha (use GEE ou Manual).",
+        )
     c11, c12 = st.columns(2)
     celeridade = c11.number_input(
         "Celeridade do canal (m/s)", 0.2, 5.0, 1.0, 0.1,
-        help="Calibração do roteamento. Rios naturais 1–1,5 m/s; com planície/várzea "
-             "mais lentos (0,4–0,8) → mais espalhamento e pico menor. (Bananal calibrou ~0,4.)",
+        help="Velocidade de propagação da onda de cheia no canal (não é a "
+        "velocidade da água: é cerca de 5/3 dela). Define o atraso do roteamento "
+        "Muskingum (K = L/c): celeridade menor deixa a onda mais lenta, espalha o "
+        "hidrograma e reduz o pico. É o principal parâmetro de calibração do "
+        "distribuído.",
+    )
+    c11.caption(
+        "Rios naturais 1 a 1,5 m/s; com planície ou várzea que amortecem 0,4 a 0,8; "
+        "canais retificados ou encaixados 2 a 3. O Bananal calibrou ~0,4. Faixa do "
+        "app 0,2 a 5."
     )
     prf = c12.number_input(
         "Peak factor (PRF)", 100, 600, 484, 4,
-        help="Forma da UH do SCS. 484 = padrão; menor achata o pico (bacias com "
-             "armazenamento). Conserva o volume.",
+        help="Fator de pico da hidrógrafa unitária do SCS. 484 é o padrão (bacias "
+        "mistas); valores menores alargam a base e achatam o pico, próprios de "
+        "bacias planas com várzea e armazenamento; maiores afinam e elevam o pico, "
+        "próprios de bacias íngremes e rápidas. Conserva o volume.",
+    )
+    c12.caption(
+        "Padrão 484. Bacias planas com muito armazenamento (planície, pântano): 256 "
+        "a 300 ou menos. Bacias muito íngremes e rápidas: até ~600. Faixa usual 100 "
+        "a 600."
     )
 
     if not st.button("Rodar modelo distribuído", type="primary"):
@@ -306,6 +434,16 @@ with col1:
     area = st.number_input(
         "Área (km²)", min_value=0.01, max_value=10_000.0,
         value=float(st.session_state.area_km2), step=0.5,
+        help="Área de drenagem da bacia até o exutório. Define o método "
+        "recomendado (≤2 km² Racional, 2 a 250 SCS-HU, >250 distribuído) e entra "
+        "direto na vazão de pico (no Racional Q = C·i·A/3,6; no SCS o pico cresce "
+        "proporcional à área). Se você delineou a bacia na Página 0, já vem "
+        "preenchida.",
+    )
+    st.caption(
+        "Microbacias: 0,01 a 2 km² (Racional). Bacias médias: 2 a 250 km² "
+        "(SCS-HU). Acima de 250 km² o concentrado perde precisão (chuva não "
+        "uniforme, tempo de viagem variável); use o distribuído."
     )
     st.session_state.area_km2 = area
     metodo_default = hg_mod.select_method(area)
@@ -326,10 +464,30 @@ with col2:
         with c1:
             L_km = st.number_input(
                 "L (canal principal, km)", 0.01, 500.0, L_default, 0.1, format="%.3f",
+                help="Comprimento do canal principal (talvegue), do ponto mais "
+                "distante até o exutório. Entra nas três fórmulas de tc (Kirpich, "
+                "Chow, California): L maior aumenta o tc, atrasando e achatando o "
+                "pico. Se delineou a bacia na Página 0, vem pré-preenchido.",
+            )
+            st.caption(
+                "Ordem de grandeza pelo tamanho da bacia (lei de Hack, L[km] ≈ "
+                "1,4·A[km²]^0,6): ~1,4 km para 1 km²; ~6 a 15 km para bacias de 10 a "
+                "50 km²; dezenas de km acima de 100 km². Ajuste ao valor real da sua "
+                "bacia."
             )
         with c2:
             H_m = st.number_input(
                 "H (desnível, m)", 0.5, 3000.0, H_default, 1.0, format="%.1f",
+                help="Desnível altimétrico ao longo do canal principal (cota da "
+                "cabeceira menos cota do exutório). Define a declividade S = H/L "
+                "usada no tc: maior desnível deixa o canal mais íngreme, reduz o tc "
+                "e adianta o pico.",
+            )
+            st.caption(
+                "Depende do relevo: poucos metros em planície, dezenas a centenas de "
+                "metros em relevo ondulado a montanhoso. A declividade resultante "
+                "S = H/L costuma cair, em ordem de grandeza, entre 0,001 e 0,1 m/m "
+                "(verifique para o seu caso)."
             )
         if st.button("Calcular tc"):
             r = tc_mod.tempo_concentracao_completo(L_km=L_km, H_m=H_m)
@@ -348,6 +506,16 @@ with col2:
     tc_h = st.number_input(
         "tc adotado (h)", min_value=0.05, max_value=48.0,
         value=float(st.session_state.tc_h), step=0.1, format="%.2f",
+        help="Tempo de concentração adotado: o tempo que a água da parte mais "
+        "distante leva para chegar ao exutório. No Racional fixa a duração da chuva "
+        "(i = i(tc)); no SCS controla o atraso da hidrógrafa (t_lag = 0,6·tc). tc "
+        "maior dá pico mais baixo e mais tardio. Use o botão acima para estimar "
+        "pelas fórmulas.",
+    )
+    st.caption(
+        "Ordem de grandeza por porte: microbacias urbanas 0,1 a 0,5 h (6 a 30 min); "
+        "bacias de dezenas de km² 1 a 4 h; bacias grandes 6 h ou mais. São valores "
+        "indicativos; prefira a estimativa pelas fórmulas."
     )
     st.session_state.tc_h = tc_h
 
@@ -360,6 +528,9 @@ metodo_escolhido = st.radio(
     "Método (permite override do default):",
     ["Automático", "Racional (forçar)", "SCS-HU (forçar)", "Distribuído (forçar)"],
     index=0, horizontal=True,
+    help="Escolhe a transformação chuva-vazão. 'Automático' segue a regra por área "
+    "(≤2 Racional, 2 a 250 SCS-HU, >250 distribuído). As opções 'forçar' fazem "
+    "override, úteis para comparar métodos ou rodar o distribuído numa bacia menor.",
 )
 
 if metodo_escolhido == "Automático":
@@ -402,6 +573,15 @@ if metodo == "Racional":
             "Uso do solo sugerido",
             list(hg_mod.C_USO_SOLO.keys()),
             index=list(hg_mod.C_USO_SOLO.keys()).index("Residencial densa (>40% impermeabilizado)"),
+            help="Categoria de uso e ocupação do solo que sugere o coeficiente C "
+            "do Racional. Quanto mais impermeável a categoria, maior o C e maior a "
+            "vazão. É apenas uma sugestão de tabela; você pode ajustar o C no campo "
+            "ao lado ou usar o valor do GEE.",
+        )
+        st.caption(
+            "Pela tabela do app, C vai de 0,10 (solo arenoso plano, parques) a 0,90 "
+            "(concreto): área central densa 0,85, residencial 0,35 a 0,65, "
+            "industrial 0,60 a 0,75."
         )
         C_sugerido = hg_mod.C_USO_SOLO[uso_solo]
         if lu_result is not None:
@@ -410,6 +590,15 @@ if metodo == "Racional":
         C = st.number_input(
             "Coeficiente C", min_value=0.05, max_value=0.99,
             value=float(C_sugerido), step=0.05,
+            help="Coeficiente de escoamento do Racional: a fração da chuva que vira "
+            "escoamento superficial. Entra direto na vazão (Q = C·i·A/3,6), então "
+            "dobrar C dobra a vazão. Use a tabela ao lado ou o valor do GEE como "
+            "ponto de partida.",
+        )
+        st.caption(
+            "Por uso do solo (TR 5 a 10 anos): áreas verdes e permeáveis 0,10 a "
+            "0,25; residencial 0,35 a 0,65; comercial e industrial 0,60 a 0,85; "
+            "asfalto, concreto e telhado 0,80 a 0,95. Eleve um pouco para TR altos."
         )
     with col2:
         st.metric("Duração adotada = tc", f"{tc_h * 60:.1f} min")
@@ -466,6 +655,15 @@ else:  # SCS-HU
         CN = st.number_input(
             "CN (Curve Number)", min_value=30.0, max_value=100.0,
             value=CN_default, step=1.0, format="%.1f",
+            help="Curve Number do SCS: resume solo e uso do solo num índice de 30 a "
+            "100. Maior CN significa solo mais impermeável ou saturado, mais "
+            "escoamento (S = 25400/CN − 254). É o parâmetro que mais altera a vazão "
+            "no SCS-HU. O cálculo do GEE pode preencher automaticamente.",
+        )
+        st.caption(
+            "AMC II (umidade média): floresta em solo bem drenado 30 a 60; pasto e "
+            "campo 50 a 80; agricultura 65 a 90; urbano 60 a 90; superfícies "
+            "impermeáveis ~98. Solo muito úmido (AMC III) sobe ~10 a 15 pontos."
         )
         st.session_state.CN = CN
 

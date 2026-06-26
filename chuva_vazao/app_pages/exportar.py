@@ -134,7 +134,14 @@ for i, (key, (label, disp)) in enumerate(modulos_disponiveis.items()):
     with cols_sel[i % 2]:
         modulos_selecionados[key] = st.checkbox(
             label, value=disp, disabled=not disp,
-            help=None if disp else "Rode a página correspondente para ativar este módulo.",
+            help=(
+                "Marque os módulos que entram no PDF. Cada módulo marcado vira um bloco "
+                "do relatório (alguns geram mais de uma seção, como a Hidrologia, que sai "
+                "com IDF, hietograma, hidrograma e metodologia). Quanto mais módulos, mais "
+                "completo e mais pesado fica o arquivo. Itens em cinza estão desativados "
+                "porque a página correspondente ainda não foi rodada — rode a página para "
+                "liberar o módulo."
+            ),
         )
 
 if not any(modulos_selecionados.values()):

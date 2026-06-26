@@ -37,6 +37,39 @@ def _centro_lonlat(mdt_fonte: str) -> tuple[float, float]:
     return float(yc), float(xc)
 
 
+def _z_terreno_centro(mdt_fonte: str) -> float | None:
+    """Cota aproximada do terreno perto do centro do MDT (le so uma janelinha).
+
+    Serve apenas p/ semear um default razoavel da 'cota de jusante' no datum do
+    MDT — o thalweg real so e conhecido depois de gerar as secoes (clique em
+    calcular). Retorna None se nao conseguir uma cota finita.
+    """
+    import numpy as np  # noqa: PLC0415
+    import rasterio  # noqa: PLC0415
+    from rasterio.windows import Window  # noqa: PLC0415
+
+    try:
+        with rasterio.open(str(mdt_fonte)) as src:
+            half = 32
+            col0 = max(0, src.width // 2 - half)
+            row0 = max(0, src.height // 2 - half)
+            win = Window(
+                col0, row0,
+                min(2 * half, src.width - col0),
+                min(2 * half, src.height - row0),
+            )
+            arr = src.read(1, window=win).astype("float64")
+            nodata = src.nodata
+        if nodata is not None:
+            arr = np.where(arr == nodata, np.nan, arr)
+        finitos = arr[np.isfinite(arr)]
+        if finitos.size == 0:
+            return None
+        return float(np.median(finitos))
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _fig_relevo_mancha(mancha) -> go.Figure:
     """Heatmap do relevo (MDT) com a profundidade da inundação sobreposta."""
     import numpy as np  # noqa: PLC0415
@@ -218,6 +251,10 @@ modo = st.radio(
     ["Caminho local / URL COG (/vsicurl)", "Upload de GeoTIFF"],
     horizontal=True,
     key="inu_modo_mdt",
+    help="Escolhe se o relevo entra por um caminho/URL (COG lido por janela, "
+         "sem baixar o raster inteiro) ou por upload de GeoTIFF. Nos dois casos, "
+         "use MDT/terreno ou topobatimétrico - nunca o MDS de superfície, que "
+         "transforma telhado e copa em dique falso.",
 )
 
 mdt_fonte: str | None = None
@@ -226,14 +263,19 @@ if modo.startswith("Caminho"):
         "Caminho local ou string VSI do COG",
         value=st.session_state.get("inu_mdt_fonte", ""),
         placeholder="D:/.../MDE_TRIBUTARIOS_V6.tif  ou  /vsicurl/https://bucket/mdt.tif",
-        help="Aceita arquivo local ou COG remoto via GDAL VSI "
-             "(/vsicurl/, /vsis3/, /vsigs/). A leitura e por janela — so os "
-             "tiles da área desenhada sobem à RAM.",
+        help="Caminho do GeoTIFF local ou string VSI de um COG remoto "
+             "(/vsicurl/, /vsis3/, /vsigs/). A leitura é por janela: só os "
+             "tiles da área desenhada sobem a RAM, então serve COG de vários GB.",
     )
     if mdt_fonte:
         st.session_state["inu_mdt_fonte"] = mdt_fonte
 else:
-    up = st.file_uploader("MDT (.tif/.tiff)", type=["tif", "tiff"], key="inu_upload")
+    up = st.file_uploader(
+        "MDT (.tif/.tiff)", type=["tif", "tiff"], key="inu_upload",
+        help="Suba o GeoTIFF do terreno (.tif/.tiff). Prefira MDT/terreno ou "
+             "topobatimétrico (com a calha do rio); o MDS de superfície "
+             "superestima cotas e cria diques falsos onde há telhado e vegetação.",
+    )
     if up is not None:
         cache = Path(st.session_state.get("_dem_cache_dir", "data/dems"))
         cache.mkdir(parents=True, exist_ok=True)
@@ -252,6 +294,11 @@ except Exception as exc:  # noqa: BLE001
     st.error(f"Não consegui abrir o MDT (`{mdt_fonte}`): {exc}")
     st.stop()
 
+# Semente do default da cota de jusante: o thalweg real so e conhecido depois
+# de gerar as secoes, entao usamos a cota do terreno perto do centro do MDT
+# (no datum do MDT). E so um ponto de partida — o usuario ajusta p/ a cota real.
+cota_jus_seed = _z_terreno_centro(mdt_fonte)
+
 
 # ---------------------------------------------------------------------------
 # 2. Vazao e rugosidade
@@ -269,25 +316,65 @@ with c1:
     Q = st.number_input(
         "Q de projeto (m³/s)", min_value=0.001, max_value=1e5,
         value=q_default, step=1.0, format="%.3f",
-        help="Pico do hidrograma (Página 3) se houver; senão, manual.",
+        help="Vazão de cheia que escoa pelo trecho, normalmente o pico do "
+             "hidrograma de projeto (Página 3) para a TR adotada. É a entrada "
+             "que mais pesa no resultado: quanto maior Q, mais alta a linha "
+             "d'água e maior a mancha de inundação.",
+    )
+    st.caption(
+        "Ordem de grandeza (varia com área da bacia e TR - sempre verificar no "
+        "caso local): córregos urbanos ~1-50 m³/s; rios de algumas centenas de "
+        "km² no TR100 ~100-500 m³/s; grandes rios > 1000 m³/s. Idealmente puxe "
+        "da Página 3."
     )
 with c2:
     material = st.selectbox(
         "Leito / rugosidade", list(sn.MANNING_N_NATURAL.keys()), index=1,
-        help="Coeficiente n de Manning, Chow (1959) Tabela 5-6.",
+        help="Define a rugosidade do leito e das margens pelo coeficiente n de "
+             "Manning. Quanto mais áspero ou vegetado o canal, maior o n, maior "
+             "o atrito e mais alta a linha d'água para a mesma vazão - afeta "
+             "diretamente a cota e a mancha.",
+    )
+    st.caption(
+        "n típico (Chow 1959, Tab. 5-6): rio em planície limpo e reto "
+        "0,025-0,035; sinuoso com matos e pedras 0,035-0,05; margens com "
+        "vegetação densa 0,07-0,10; canal de terra 0,022-0,035; rocha "
+        "0,025-0,04. As opções da lista usam n de 0,022 a 0,075; planície de "
+        "inundação muito vegetada chega a 0,10-0,15."
     )
     n_manning = sn.MANNING_N_NATURAL[material]
     st.caption(f"n de Manning = {n_manning}")
 with c3:
     cc = st.selectbox(
         "Contorno de jusante", ["normal", "critica", "cota"],
-        help="normal = profundidade normal (Manning); critica = Fr=1; "
-             "cota = cota d'água imposta.",
+        help="Define a lâmina d'água na seção mais a jusante, ponto de partida "
+             "do cálculo (o perfil marcha de jusante para montante). 'normal': "
+             "profundidade de equilíbrio pela declividade local do leito (caso "
+             "geral). 'crítica': fixa Fr=1 (seção de controle, queda ou "
+             "soleira). 'cota': impõe um nível conhecido (barramento, "
+             "confluência, foz).",
     )
-    cota_jus = (
-        st.number_input("Cota d'água de jusante (m)", value=0.0, format="%.2f")
-        if cc == "cota" else None
-    )
+    if cc == "cota":
+        # O default vem da cota do terreno perto do centro do MDT (no datum do
+        # MDT) — quase sempre acima do thalweg local, evitando o ValueError que
+        # o antigo default 0.0 disparava. O usuario ajusta p/ a cota real.
+        _cota_default = (
+            round(cota_jus_seed, 2) if cota_jus_seed is not None else 0.0
+        )
+        cota_jus = st.number_input(
+            "Cota d'água de jusante (m)", value=_cota_default, format="%.2f",
+            help="Nível d'água conhecido na seção mais a jusante, em cota "
+                 "absoluta no mesmo datum do MDT (é cota, não profundidade). "
+                 "Precisa ser maior que o fundo (thalweg) local; quanto mais "
+                 "alta, mais o remanso eleva a linha d'água trecho acima.",
+        )
+        st.caption(
+            "Use a cota do terreno (MDT) no ponto de jusante somada à lâmina "
+            "esperada. Tem de ficar entre o thalweg e a margem da seção - valor "
+            "igual ou abaixo do thalweg é rejeitado pelo cálculo."
+        )
+    else:
+        cota_jus = None
 
 
 # ---------------------------------------------------------------------------
@@ -296,9 +383,44 @@ with c3:
 
 st.subheader("3. Eixo do rio")
 p1, p2, p3 = st.columns(3)
-espac = p1.number_input("Espaçamento entre seções (m)", 5.0, 1000.0, 50.0, 5.0)
-larg = p2.number_input("Largura das seções (m)", 10.0, 3000.0, 200.0, 10.0)
-namo = int(p3.number_input("Amostras por seção", 10, 400, 60, 10))
+espac = p1.number_input(
+    "Espaçamento entre seções (m)", 5.0, 1000.0, 50.0, 5.0,
+    help="Distância ao longo do rio entre duas seções transversais "
+         "consecutivas. Menor espaçamento = mais seções, perfil longitudinal "
+         "mais detalhado e cálculo mais lento. O app limita a 200 seções: acima "
+         "disso ele aumenta o espaçamento efetivo automaticamente, sem deixar "
+         "trecho descoberto.",
+)
+p1.caption(
+    "Faixas usuais (heurísticas, ajustar ao caso): córregos e canais urbanos "
+    "10-50 m; rios médios 50-100 m; trechos longos ou grandes rios 100-200 m. "
+    "Eixos que exigiriam mais de 200 seções são reamostrados pelo app."
+)
+larg = p2.number_input(
+    "Largura das seções (m)", 10.0, 3000.0, 200.0, 10.0,
+    help="Comprimento de cada seção transversal, centrada no eixo do rio "
+         "(estende-se largura/2 para cada margem). Define até onde a mancha "
+         "pode espraiar lateralmente. Se a lâmina alcança a borda da seção, o "
+         "app avisa extravasamento - nesse caso aumente a largura para abranger "
+         "toda a planície inundável.",
+)
+p2.caption(
+    "Cubra toda a planície inundável (faixas heurísticas): calhas e canais "
+    "urbanos 50-100 m; rios médios encaixados 200-500 m; planícies amplas "
+    "500-3000 m. Comece largo e reduza só se não houver aviso de extravasamento."
+)
+namo = int(p3.number_input(
+    "Amostras por seção", 10, 400, 60, 10,
+    help="Quantos pontos do MDT são lidos ao longo de cada seção transversal. "
+         "Mais amostras = geometria da seção mais fiel (capta calha estreita e "
+         "microrrelevo) e cálculo um pouco mais lento. O espaçamento transversal "
+         "resultante é largura / amostras.",
+))
+p3.caption(
+    "Ajuste para o espaçamento transversal (largura / amostras) ficar próximo "
+    "do pixel do MDT: ex. 200 m / 60 ~ 3,3 m por ponto; com MDT de ~1 m, suba "
+    "as amostras. Faixa típica 40-120 (heurística)."
+)
 
 import folium  # noqa: E402, PLC0415
 from folium.plugins import Draw  # noqa: E402, PLC0415

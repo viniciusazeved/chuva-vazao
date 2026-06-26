@@ -42,12 +42,37 @@ fonte_dem = st.radio(
         "OpenTopography API (Copernicus GLO-30)",
     ],
     horizontal=False,
+    help="Define de onde vem o relevo (MDE) usado para delinear a bacia. "
+         "'Google Earth Engine' puxa o Copernicus GLO-30 (~30 m) sem cadastro — "
+         "caminho recomendado. 'Upload local' aceita um GeoTIFF seu em qualquer "
+         "sistema de coordenadas (reprojetado para UTM automaticamente). "
+         "'OpenTopography' também entrega Copernicus 30 m (ou outros produtos), "
+         "mas exige uma API key gratuita. A fonte muda só a procedência e a "
+         "resolução do dado, não a física do delineamento.",
 )
 
 dem_path: Path | None = None
 if fonte_dem.startswith("Google"):
     col1, col2 = st.columns(2)
-    buffer = col1.number_input("Buffer (graus)", 0.02, 1.0, 0.1, 0.01, key="gee_buffer")
+    buffer = col1.number_input(
+        "Buffer (graus)", 0.02, 1.0, 0.1, 0.01, key="gee_buffer",
+        help="Margem ao redor do exutório usada para recortar o DEM. O recorte é "
+             "um quadrado de lado 2×buffer centrado no exutório (1° ≈ 111 km), "
+             "então a área útil a montante é de cerca de buffer×111 km em cada "
+             "direção. Buffer maior baixa um raster maior e mais lento, mas evita "
+             "cortar a bacia na borda; buffer pequeno demais trunca bacias grandes "
+             "e subestima área, perímetro e comprimento de canal (dispara o aviso "
+             "de truncamento).",
+    )
+    col1.caption(
+        "O exutório fica no CENTRO do recorte, então a bacia (que cresce a "
+        "montante) tem ~buffer×111 km de folga em cada direção. Ordem de grandeza "
+        "da área que cabe sem truncar (varia muito com a forma da bacia): "
+        "0,05°→~30 km²; 0,1°→~100 km²; 0,2°→~500 km²; 0,3°→~1000 km²; "
+        "0,5°→~3000 km². No Brasil (lat ~−23) a longitude rende ~102 km/°, um "
+        "pouco menos no sentido leste-oeste. Se aparecer o aviso de truncamento, "
+        "aumente o buffer."
+    )
     download_btn = col2.button("Baixar DEM via GEE")
     if download_btn:
         with st.spinner(f"Puxando Copernicus GLO-30 via GEE (buffer={buffer}°)..."):
@@ -71,6 +96,12 @@ elif fonte_dem.startswith("Upload"):
     up = st.file_uploader(
         "DEM local (.tif, qualquer CRS — será reprojetado para UTM)",
         type=["tif", "tiff"],
+        help="Carregue um DEM próprio em GeoTIFF (.tif/.tiff), em qualquer sistema "
+             "de coordenadas — ele é reprojetado automaticamente para o UTM da "
+             "região. A resolução do raster define o detalhe da rede de drenagem e "
+             "das métricas. Aqui não há buffer: o recorte (e o risco de truncar a "
+             "bacia) é a própria extensão do arquivo, então deixe folga a montante "
+             "do exutório.",
     )
     if up is not None:
         cache_dir = Path(st.session_state.get("_dem_cache_dir", "data/dems"))
@@ -84,11 +115,45 @@ else:
         api_key = st.text_input(
             "OpenTopography API key",
             type="password",
-            help="Crie gratuitamente em https://portal.opentopography.org/",
+            help="Chave de acesso gratuita da API OpenTopography, usada só quando "
+                 "essa fonte é escolhida. Não altera nenhum resultado de cálculo, "
+                 "apenas libera o download do DEM. Crie em "
+                 "https://portal.opentopography.org/. Se você definir "
+                 "OPENTOPO_API_KEY no ambiente, este campo nem aparece.",
         )
     col1, col2, col3 = st.columns(3)
-    buffer = col1.number_input("Buffer (graus)", 0.02, 1.0, 0.1, 0.01, key="opt_buffer")
-    dem_type = col2.selectbox("Tipo", ["COP30", "COP90", "SRTMGL1", "SRTMGL3"])
+    buffer = col1.number_input(
+        "Buffer (graus)", 0.02, 1.0, 0.1, 0.01, key="opt_buffer",
+        help="Idêntico ao Buffer da opção GEE: define o quadrado de lado 2×buffer "
+             "centrado no exutório (1° ≈ 111 km) que será baixado do "
+             "OpenTopography. A área útil a montante é ~buffer×111 km em cada "
+             "direção. Maior cobre bacias maiores sem truncar, ao custo de "
+             "download mais lento; pequeno demais corta o divisor de águas e "
+             "subestima as métricas.",
+    )
+    col1.caption(
+        "O exutório fica no CENTRO do recorte, então a bacia (que cresce a "
+        "montante) tem ~buffer×111 km de folga em cada direção. Ordem de grandeza "
+        "da área que cabe sem truncar (varia muito com a forma da bacia): "
+        "0,05°→~30 km²; 0,1°→~100 km²; 0,2°→~500 km²; 0,3°→~1000 km²; "
+        "0,5°→~3000 km². No Brasil (lat ~−23) a longitude rende ~102 km/°. Aviso "
+        "de truncamento = aumente o buffer."
+    )
+    dem_type = col2.selectbox(
+        "Tipo", ["COP30", "COP90", "SRTMGL1", "SRTMGL3"],
+        help="Produto e resolução do relevo no OpenTopography. COP30 (Copernicus "
+             "30 m) e SRTMGL1 (SRTM 30 m) têm pixel de 30 m; COP90 e SRTMGL3 têm "
+             "90 m. Resolução de 30 m capta melhor canais e divisores em bacias "
+             "pequenas/urbanas; 90 m só compensa em bacias grandes, para baixar "
+             "mais rápido.",
+    )
+    col2.caption(
+        "30 m (COP30/SRTMGL1) para bacias de até dezenas de km²; 90 m "
+        "(COP90/SRTMGL3) apenas acima de centenas de km², onde o detalhe pesa "
+        "menos. O Copernicus (COP) costuma ter menos artefatos/vazios que o SRTM "
+        "na mesma resolução. Lembre que o 'Threshold canal' é em células: com 90 m "
+        "cada célula vale ~9× mais área."
+    )
     download_btn = col3.button("Baixar DEM")
     if download_btn:
         if not api_key:
@@ -117,20 +182,55 @@ else:
 st.subheader("Mapa")
 col1, col2 = st.columns([3, 1])
 with col2:
-    lat = st.number_input("Lat", -90.0, 90.0, default_lat, 0.001, format="%.6f")
-    lon = st.number_input("Lon", -180.0, 180.0, default_lon, 0.001, format="%.6f")
-    snap_dist = st.number_input("Snap (m)", 50, 2000, 500, 50)
+    lat = st.number_input(
+        "Lat", -90.0, 90.0, default_lat, 0.001, format="%.6f",
+        help="Latitude do exutório em graus decimais (WGS84/EPSG:4326); negativo = "
+             "hemisfério Sul. Define o ponto de saída da bacia e o centro do "
+             "recorte do DEM. Em geral é preenchida sozinha ao clicar no mapa.",
+    )
+    lon = st.number_input(
+        "Lon", -180.0, 180.0, default_lon, 0.001, format="%.6f",
+        help="Longitude do exutório em graus decimais (WGS84/EPSG:4326); negativo = "
+             "a oeste de Greenwich. Junto com a latitude, fixa o exutório e o "
+             "centro do recorte do DEM. Costuma vir do clique no mapa.",
+    )
+    snap_dist = st.number_input(
+        "Snap (m)", 50, 2000, 500, 50,
+        help="Raio máximo, em metros, dentro do qual o exutório clicado é arrastado "
+             "até encostar no canal (rio de maior acumulação ou stream mais "
+             "próximo, conforme o método). Maior tolera clique impreciso, mas pode "
+             "grudar no rio errado; menor exige clicar quase em cima do canal, sob "
+             "risco de a bacia sair vazia. A distância é em metros porque o DEM é "
+             "reprojetado para UTM antes do snap.",
+    )
+    st.caption(
+        "DEM ~30 m: 100–300 m (≈3–10 pixels) bastam para um clique bem posicionado; "
+        "500–1000 m para clique grosseiro ou rio largo. Acima disso cresce o risco "
+        "de pular para um canal vizinho. Ordem de grandeza."
+    )
     stream_thresh = st.number_input(
         "Threshold canal (células)", 10, 10000, 100, 10,
-        help="Número mínimo de células para considerar canal. Maior = rede mais esparsa.",
+        help="Quantas células de drenagem precisam se acumular num pixel para ele "
+             "virar canal (WhiteboxTools ExtractStreams). Com DEM de 30 m, 100 "
+             "células ≈ 0,09 km² de área de cabeceira. Maior = rede mais esparsa, "
+             "canais começam mais a jusante; menor = rede mais densa, mas pode "
+             "criar córregos espúrios e mudar onde o exutório faz snap. Se a bacia "
+             "sair vazia, reduza o valor.",
+    )
+    st.caption(
+        "DEM 30 m (célula = 900 m²): 10 céls ≈ 0,009 km²; 100 ≈ 0,09 km²; "
+        "1000 ≈ 0,9 km²; 10000 ≈ 9 km². Para DEM de 90 m multiplique a área por ~9. "
+        "Cabeceira de canal real costuma iniciar na ordem de 0,05–0,5 km² (≈55–550 "
+        "células a 30 m), variando com clima e relevo."
     )
     snap_metodo = st.selectbox(
         "Snap do exutório",
         ["Maior acumulação (rio principal)", "Canal mais próximo (Jenson)"],
-        help="Maior acumulação leva o exutório ao rio de maior área de drenagem "
-             "dentro do raio — robusto, evita grudar num córrego lateral. Jenson "
-             "vai ao canal mais próximo (respeita o clique, mas pode pegar "
-             "afluente pequeno se o threshold estiver baixo).",
+        help="Como ajustar o exutório ao canal antes de delinear. 'Maior "
+             "acumulação' move para o pixel de maior área drenada dentro do raio "
+             "de snap (rio principal, robusto ao threshold). 'Jenson' move para o "
+             "canal mais próximo, respeitando melhor o clique, mas pode grudar num "
+             "afluente pequeno se o threshold de canal estiver baixo.",
     )
     snap_method = "accumulation" if snap_metodo.startswith("Maior") else "jenson"
 
