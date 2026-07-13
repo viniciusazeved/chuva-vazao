@@ -23,6 +23,10 @@ class IDFParams:
     expoente_duracao: float
     constante_duracao: float
     fonte: str = ""
+    # Qualidade do ajuste (so preenchido quando os coeficientes vem de regressao
+    # sobre uma tabela; None para coeficientes informados diretamente).
+    rmse_rel: float | None = None       # RMSE relativo (fracao)
+    erro_max_rel: float | None = None   # erro relativo maximo (fracao)
 
     def intensidade(self, TR: float, duracao_min: float) -> float:
         """i = K * TR^a / (t + b)^c."""
@@ -207,11 +211,14 @@ def _fit_params_from_table(df: pd.DataFrame) -> IDFParams:
         raise ValueError(f"Ajuste K, a, b, c nao convergiu: {exc}") from exc
 
     K_fit, a_fit, b_fit, c_fit = (float(x) for x in popt)
-    # RMSE relativo pra sanity
+    # Qualidade do ajuste: RMSE relativo e erro relativo maximo (celula a celula).
     i_pred = _model((tr_flat, dur_flat), *popt)
-    rmse_rel = float(np.sqrt(np.mean(((i_pred - i_flat) / i_flat) ** 2)))
+    err_rel = (i_pred - i_flat) / i_flat
+    rmse_rel = float(np.sqrt(np.mean(err_rel ** 2)))
+    erro_max_rel = float(np.max(np.abs(err_rel)))
     fonte = (
-        f"Ajuste IDF-generator (tabela, RMSE rel = {rmse_rel:.3%}): "
+        f"Ajuste IDF-generator (tabela, RMSE rel = {rmse_rel:.1%}, "
+        f"erro max = {erro_max_rel:.1%}): "
         f"K={K_fit:.1f}, a={a_fit:.3f}, b={b_fit:.2f}, c={c_fit:.3f}"
     )
     return IDFParams(
@@ -220,6 +227,8 @@ def _fit_params_from_table(df: pd.DataFrame) -> IDFParams:
         expoente_duracao=c_fit,  # convencao idf_generator: c=expoente
         constante_duracao=b_fit,  # b=constante
         fonte=fonte,
+        rmse_rel=rmse_rel,
+        erro_max_rel=erro_max_rel,
     )
 
 

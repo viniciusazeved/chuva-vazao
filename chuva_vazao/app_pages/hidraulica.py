@@ -180,6 +180,7 @@ if secao.startswith("Circular"):
                 fator_seguranca=fator,
                 lamina_max_ratio=lamina_max,
                 n_linhas=int(n_linhas),
+                material=material,
             )
         except ValueError as exc:
             st.error(str(exc))
@@ -192,13 +193,15 @@ if secao.startswith("Circular"):
                 fator_seguranca=fator,
                 lamina_max_ratio=lamina_max,
                 n_linhas=int(n_linhas),
+                material=material,
             )
         except ValueError as exc:
             st.error(str(exc))
             st.stop()
 
     Q_por_linha = Q_projeto / n_linhas
-    Q_total_capacidade = dim.operacao.Q_m3_s * n_linhas
+    # Capacidade REAL da seção na lâmina-limite (não é o Q de projeto de volta).
+    Q_capacidade_total = dim.Q_capacidade_por_linha_m3_s * n_linhas
 
     st.subheader("Resultado")
     if n_linhas > 1:
@@ -211,12 +214,18 @@ if secao.startswith("Circular"):
     col1, col2, col3 = st.columns(3)
     col1.metric("Diâmetro", f"{dim.D_adotado_m * 1000:.0f} mm")
     col2.metric("Q por linha", f"{Q_por_linha:.3f} m³/s")
-    col3.metric("Q total (cap.)", f"{Q_total_capacidade:.3f} m³/s")
+    col3.metric(
+        "Capacidade da seção", f"{Q_capacidade_total:.3f} m³/s",
+        delta=f"{(Q_capacidade_total / Q_projeto - 1) * 100:+.0f}% vs projeto",
+        help="Vazão máxima que a seção comporta na lâmina-limite (todas as "
+             "linhas), pelo critério de enchimento. Deve ser ≥ Q de projeto.",
+    )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Lâmina de operação", f"{dim.operacao.h_m * 100:.1f} cm")
     col2.metric("Fill ratio", f"{dim.operacao.fill_ratio * 100:.1f} %")
     col3.metric("Velocidade", f"{dim.operacao.v_m_s:.2f} m/s")
+    col4.metric("Froude", f"{dim.operacao.Fr:.2f} ({dim.operacao.regime})")
 
     for w in dim.warnings:
         st.warning(w)
@@ -258,7 +267,10 @@ if secao.startswith("Circular"):
         "v_op_m_s": dim.operacao.v_m_s,
         "Q_projeto_m3_s": dim.Q_projeto_m3_s,
         "Q_por_linha_m3_s": Q_por_linha,
-        "Q_total_capacidade_m3_s": Q_total_capacidade,
+        "Q_capacidade_total_m3_s": Q_capacidade_total,
+        "Q_operacao_total_m3_s": dim.operacao.Q_m3_s * n_linhas,
+        "Fr": dim.operacao.Fr,
+        "regime": dim.operacao.regime,
         "warnings": dim.warnings,
     }
 
@@ -336,6 +348,7 @@ elif secao.startswith("Retangular"):
                 fator_seguranca=fator,
                 lamina_max_ratio=lamina_max,
                 n_linhas=int(n_linhas),
+                material=material,
             )
         except ValueError as exc:
             st.error(str(exc))
@@ -348,13 +361,15 @@ elif secao.startswith("Retangular"):
                 fator_seguranca=fator,
                 lamina_max_ratio=lamina_max,
                 n_linhas=int(n_linhas),
+                material=material,
             )
         except ValueError as exc:
             st.error(str(exc))
             st.stop()
 
     Q_por_linha = Q_projeto / n_linhas
-    Q_total_capacidade = dim.operacao.Q_m3_s * n_linhas
+    # Capacidade REAL da seção na lâmina-limite (não é o Q de projeto de volta).
+    Q_capacidade_total = dim.Q_capacidade_por_linha_m3_s * n_linhas
 
     st.subheader("Resultado")
     if n_linhas > 1:
@@ -367,12 +382,18 @@ elif secao.startswith("Retangular"):
     col1, col2, col3 = st.columns(3)
     col1.metric("B × H", f"{dim.b_m:.2f} × {dim.h_total_m:.2f} m")
     col2.metric("Q por linha", f"{Q_por_linha:.3f} m³/s")
-    col3.metric("Q total (cap.)", f"{Q_total_capacidade:.3f} m³/s")
+    col3.metric(
+        "Capacidade da seção", f"{Q_capacidade_total:.3f} m³/s",
+        delta=f"{(Q_capacidade_total / Q_projeto - 1) * 100:+.0f}% vs projeto",
+        help="Vazão máxima que a seção comporta na lâmina-limite (todas as "
+             "linhas), pelo critério de enchimento. Deve ser ≥ Q de projeto.",
+    )
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
     col1.metric("Lâmina de operação", f"{dim.operacao.h_m * 100:.1f} cm")
     col2.metric("Lâmina máx permitida", f"{dim.lamina_max_permitida * 100:.1f} cm")
     col3.metric("Velocidade", f"{dim.operacao.v_m_s:.2f} m/s")
+    col4.metric("Froude", f"{dim.operacao.Fr:.2f} ({dim.operacao.regime})")
 
     for w in dim.warnings:
         st.warning(w)
@@ -416,7 +437,10 @@ elif secao.startswith("Retangular"):
         "v_op_m_s": dim.operacao.v_m_s,
         "Q_projeto_m3_s": dim.Q_projeto_m3_s,
         "Q_por_linha_m3_s": Q_por_linha,
-        "Q_total_capacidade_m3_s": Q_total_capacidade,
+        "Q_capacidade_total_m3_s": Q_capacidade_total,
+        "Q_operacao_total_m3_s": dim.operacao.Q_m3_s * n_linhas,
+        "Fr": dim.operacao.Fr,
+        "regime": dim.operacao.regime,
         "warnings": dim.warnings,
     }
 

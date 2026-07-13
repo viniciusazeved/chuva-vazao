@@ -103,12 +103,19 @@ def test_classify_gh_areia_pura_vira_A():
     assert all(g == "A" for g in gh)
 
 
-def test_classify_gh_argila_pesada_vira_D():
-    """Argila > 40% -> D."""
-    sand = np.array([20.0, 15.0])
-    clay = np.array([45.0, 50.0])
+def test_classify_gh_argila_muito_pesada_vira_D():
+    """Sartori: só argila MUITO pesada e pouco arenosa (sand<15, clay>=55) -> D.
+    Argila moderada (ex. Latossolo, clay~45%) fica em C/B por ser bem drenada,
+    não em D como a classificação por textura pura (Rawls) faria."""
+    sand = np.array([10.0, 8.0])
+    clay = np.array([60.0, 70.0])
     gh = landuse.classify_hydrological_group(sand, clay)
     assert all(g == "D" for g in gh)
+    # Argila moderada e pouco arenosa cai em C (não D), pelo princípio de Sartori.
+    gh_moderada = landuse.classify_hydrological_group(
+        np.array([20.0, 15.0]), np.array([45.0, 50.0]),
+    )
+    assert all(g == "C" for g in gh_moderada)
 
 
 def test_classify_gh_intermediario_nao_quebra():
@@ -117,6 +124,24 @@ def test_classify_gh_intermediario_nao_quebra():
     clay = np.array([15.0, 25.0, 30.0])
     gh = landuse.classify_hydrological_group(sand, clay)
     assert all(g in {"A", "B", "C", "D"} for g in gh)
+
+
+def test_classify_gh_agravado_por_declividade():
+    """Encosta ingreme agrava o grupo (plano B, ingreme C, muito ingreme D)."""
+    sand = np.array([40.0, 40.0, 40.0])   # textura -> B
+    clay = np.array([20.0, 20.0, 20.0])
+    assert all(g == "B" for g in landuse.classify_hydrological_group(sand, clay))
+    slope = np.array([5.0, 30.0, 60.0])   # plano / ingreme / muito ingreme
+    gh = landuse.classify_hydrological_group(sand, clay, slope_pct=slope)
+    assert list(gh) == ["B", "C", "D"]
+
+
+def test_agravar_gh_limita_em_D():
+    """Agravamento por declividade nao passa de D."""
+    gh = np.array(["C", "D"])
+    slope = np.array([60.0, 60.0])
+    out = landuse._agravar_gh_por_declividade(gh, slope)
+    assert list(out) == ["D", "D"]
 
 
 def test_classify_gh_shape_preservado():

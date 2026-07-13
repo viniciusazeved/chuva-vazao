@@ -559,6 +559,20 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_param("a (expoente TR):", f"{p.expoente_tr:.4f}")
     pdf.add_param("b (expoente duracao):", f"{p.expoente_duracao:.4f}")
     pdf.add_param("c (constante, min):", f"{p.constante_duracao:.2f}")
+    if getattr(p, "rmse_rel", None) is not None:
+        emax = p.erro_max_rel or 0.0
+        pdf.add_param(
+            "Aderencia do ajuste:",
+            f"RMSE {p.rmse_rel:.1%} / erro max {emax:.1%}",
+            hint="coeficientes ajustados a partir da tabela do IDF-generator",
+        )
+        if p.rmse_rel > 0.10 or emax > 0.20:
+            pdf.add_text(
+                "Nota: o ajuste de um unico jogo K/a/b/c distorce as pontas da "
+                "curva IDF (duracoes extremas). A chuva de projeto deve ser "
+                "conferida contra a tabela original nas duracoes criticas.",
+                size=8,
+            )
 
     if inp.fig_idf is not None:
         pdf.add_subsection("Curva IDF")
@@ -775,11 +789,20 @@ def _render_dimensionamento(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_subsection("Operacao real (Q de projeto, sem fator de seguranca)")
     pdf.add_param("Q por linha:", f"{dim.get('Q_por_linha_m3_s', 0):.3f} m³/s")
     pdf.add_param(
-        "Q total (capacidade):",
-        f"{dim.get('Q_total_capacidade_m3_s', 0):.3f} m³/s",
+        "Q de operacao (todas as linhas):",
+        f"{dim.get('Q_operacao_total_m3_s', dim.get('Q_total_capacidade_m3_s', 0)):.3f} m³/s",
+    )
+    pdf.add_param(
+        "Capacidade da secao (lamina-limite):",
+        f"{dim.get('Q_capacidade_total_m3_s', 0):.3f} m³/s",
     )
     pdf.add_param("Lamina de operacao:", f"{dim.get('h_op_m', 0):.3f} m")
     pdf.add_param("Velocidade:", f"{dim.get('v_op_m_s', 0):.2f} m/s")
+    if dim.get("Fr"):
+        pdf.add_param(
+            "Numero de Froude:",
+            f"{dim.get('Fr', 0):.2f} ({dim.get('regime', '?')})",
+        )
 
     warnings_list = dim.get("warnings") or []
     if warnings_list:

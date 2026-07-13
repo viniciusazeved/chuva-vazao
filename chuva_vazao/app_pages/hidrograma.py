@@ -94,6 +94,12 @@ def _render_calc_gee_auto(metodo: str):
                 f"Fontes: LULC = `{lu.fonte_lulc}`, solo = `{lu.fonte_solo}`. "
                 "Os valores C/CN são médias ponderadas por pixel."
             )
+            if getattr(lu, "declividade_considerada", False):
+                st.caption(
+                    "Grupo hidrológico **agravado por declividade** (DEM Copernicus) "
+                    "em encostas íngremes — solo raso de encosta responde mais "
+                    "rápido que a textura sozinha indicaria."
+                )
             return lu
     return st.session_state.get("landuse_result")
 
@@ -691,6 +697,76 @@ else:  # SCS-HU
 
     with st.expander("Tabela do hidrograma"):
         st.dataframe(hg_df.round(3), use_container_width=True)
+
+    # -----------------------------------------------------------------------
+    # Varredura de duracao critica: a duracao adotada (Pagina 2) nem sempre e a
+    # que maximiza o pico. Com CN baixo (Ia alto), chuvas mais longas geram mais
+    # excedente e o pico cresce ate uma duracao critica > tc.
+    # -----------------------------------------------------------------------
+    with st.expander("🔎 Duração crítica (varredura)", expanded=False):
+        idf_params = st.session_state.get("idf_params")
+        if idf_params is None:
+            st.info("Carregue a IDF na Página 1 para varrer durações.")
+        else:
+            from chuva_vazao import hietograma as _hie
+
+            TR_atual = st.session_state.get("TR", 25)
+            dt_atual = float(st.session_state.get("dt_min", 5) or 5)
+            D_atual = float(st.session_state.get("duracao_min", 60) or 60)
+            metodo_h = st.session_state.get(
+                "metodo_hietograma", "Blocos Alternados (Chicago)"
+            )
+            quartil = int(st.session_state.get("huff_quartil", 2) or 2)
+            st.caption(
+                f"Testa várias durações com a mesma IDF (TR={TR_atual}), CN={CN:.0f} "
+                f"e tc={tc_h * 60:.0f} min, método '{metodo_h}'. A duração de projeto "
+                f"atual (Página 2) é {D_atual:.0f} min."
+            )
+            duracoes_teste = [
+                d for d in [15, 30, 45, 60, 90, 120, 180, 240, 360, 480, 720, 1080, 1440]
+                if d >= dt_atual
+            ]
+            linhas = []
+            for D in duracoes_teste:
+                dt_use = dt_atual if D <= 360 else max(dt_atual, 15.0)
+                try:
+                    if metodo_h.startswith("Huff"):
+                        h = _hie.huff(idf_params, TR_atual, D, dt_use, quartil=quartil)
+                    else:
+                        h = _hie.blocos_alternados(idf_params, TR_atual, D, dt_use)
+                    hgd = hg_mod.hidrograma_projeto(h, scs)
+                    linhas.append({
+                        "D (min)": D,
+                        "P total (mm)": round(_hie.altura_total(h), 1),
+                        "Q pico (m³/s)": round(hg_mod.Q_pico_m3s(hgd), 1),
+                    })
+                except Exception:
+                    continue
+            if linhas:
+                df_var = pd.DataFrame(linhas)
+                i_max = int(df_var["Q pico (m³/s)"].idxmax())
+                D_crit = float(df_var.loc[i_max, "D (min)"])
+                Q_crit = float(df_var.loc[i_max, "Q pico (m³/s)"])
+                Q_atual = float(hg_mod.Q_pico_m3s(hg_df))
+                st.line_chart(df_var.set_index("D (min)")["Q pico (m³/s)"])
+                st.dataframe(df_var, use_container_width=True, hide_index=True)
+                if D_crit > D_atual * 1.2 and Q_crit > Q_atual * 1.05:
+                    st.warning(
+                        f"Duração crítica ≈ **{D_crit:.0f} min** (Q pico "
+                        f"{Q_crit:.1f} m³/s), maior que a duração de projeto atual "
+                        f"de {D_atual:.0f} min (Q pico {Q_atual:.1f} m³/s). O Q pode "
+                        f"estar **subestimado em ~{(Q_crit / Q_atual - 1) * 100:.0f}%**. "
+                        f"Redefina a duração na Página 2 para ~{D_crit:.0f} min "
+                        f"(ou teste a chuva de 24 h, prática usual em bacias desse "
+                        f"porte). Obs.: em blocos alternados o pico cresce "
+                        f"monotonicamente com D — adote a duração crítica com "
+                        f"critério de projeto, não o maior valor da tabela."
+                    )
+                else:
+                    st.success(
+                        f"A duração de projeto ({D_atual:.0f} min) está próxima da "
+                        f"crítica (~{D_crit:.0f} min). Q de projeto consistente."
+                    )
 
 
 st.success(

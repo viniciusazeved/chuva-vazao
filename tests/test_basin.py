@@ -124,5 +124,5 @@ def test_basin_metrics_summary_dict(synthetic_dem, synthetic_outlet):
     d = result.metrics.summary_dict()
     assert set(d.keys()) == {
         "A (km2)", "P (km)", "L canal (km)", "S media (%)",
-        "Z max (m)", "Z min (m)", "dH (m)",
+        "Z max (m)", "Z min (m)", "dH bacia (m)", "dH talvegue (m)",
     }

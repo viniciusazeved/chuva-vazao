@@ -55,9 +55,27 @@ MANNING_N: dict[str, float] = {
     "Canal em gabiao": 0.027,
 }
 
+GRAV = 9.81  # aceleracao da gravidade (m/s^2)
+
 # Limites recomendados de velocidade (m/s) para drenagem pluvial.
 V_MIN_ASSENTAMENTO = 0.60  # abaixo: sedimentacao
-V_MAX_CONCRETO = 5.00      # acima: abrasao/cavitacao
+V_MAX_CONCRETO = 5.00      # acima: abrasao/cavitacao (fallback quando o material nao esta na tabela)
+
+# Velocidade maxima admissivel por material (m/s) — limita abrasao/erosao do
+# revestimento. Concreto/PVC/PEAD: Chaudhry (2008), ABNT NBR 15645; pedra
+# argamassada e gabiao: Maccaferri; canal de terra: Fortier & Scobey.
+VELOCIDADE_MAX_MATERIAL: dict[str, float] = {
+    "Concreto liso (manilha)": 6.0,
+    "Concreto rugoso / moldado in loco": 5.0,
+    "PEAD corrugado": 6.0,
+    "PVC corrugado": 6.0,
+    "PVC liso": 6.0,
+    "Metalico corrugado": 4.5,
+    "Alvenaria de pedra argamassada": 4.0,
+    "Canal de terra (bom estado)": 1.2,
+    "Canal em concreto revestido": 5.0,
+    "Canal em gabiao": 5.5,
+}
 
 
 # ---------------------------------------------------------------------------
@@ -76,6 +94,26 @@ class EscoamentoCircular:
     Q_m3_s: float             # vazao
     S_m_per_m: float
     n: float
+
+    @property
+    def espelho_m(self) -> float:
+        """Largura da superficie livre (corda) na lamina h."""
+        if self.h_m <= 0 or self.h_m >= self.D_m:
+            return 0.0
+        return 2.0 * math.sqrt(self.h_m * (self.D_m - self.h_m))
+
+    @property
+    def Fr(self) -> float:
+        """Numero de Froude (profundidade hidraulica D_h = A/T)."""
+        T = self.espelho_m
+        if T <= 0 or self.A_m2 <= 0:
+            return 0.0
+        return self.v_m_s / math.sqrt(GRAV * self.A_m2 / T)
+
+    @property
+    def regime(self) -> str:
+        fr = self.Fr
+        return "subcrítico" if fr < 0.95 else ("supercrítico" if fr > 1.05 else "crítico")
 
 
 def manning_circular_full(D_m: float, S_m_per_m: float, n: float) -> EscoamentoCircular:
@@ -167,6 +205,14 @@ class DimensionamentoCircular:
     operacao: EscoamentoCircular
     warnings: list[str]
 
+    @property
+    def Q_capacidade_por_linha_m3_s(self) -> float:
+        """Capacidade REAL de uma linha na lamina-limite (nao o Q de projeto)."""
+        return manning_circular_partial(
+            self.D_adotado_m, self.lamina_max_permitida,
+            self.operacao.S_m_per_m, self.operacao.n,
+        ).Q_m3_s
+
 
 def size_circular_culvert(
     Q_projeto_m3_s: float,
@@ -176,6 +222,7 @@ def size_circular_culvert(
     lamina_max_ratio: float = 0.80,
     diametros_comerciais: list[float] | None = None,
     n_linhas: int = 1,
+    material: str | None = None,
 ) -> DimensionamentoCircular:
     """
     Seleciona o menor diametro comercial que atenda a vazao de projeto.
@@ -204,7 +251,7 @@ def size_circular_culvert(
             # Operacao real por linha (Q projeto, sem fator)
             h_op = lamina_para_vazao_circular(Q_por_linha, D, S_m_per_m, n)
             op = manning_circular_partial(D, h_op, S_m_per_m, n)
-            warnings = validar_velocidade(op.v_m_s)
+            warnings = validar_velocidade(op.v_m_s, material=material, fr=op.Fr)
             return DimensionamentoCircular(
                 D_adotado_m=D,
                 Q_projeto_m3_s=Q_projeto_m3_s,
@@ -231,6 +278,7 @@ def avaliar_circular_manual(
     fator_seguranca: float = 1.10,
     lamina_max_ratio: float = 0.80,
     n_linhas: int = 1,
+    material: str | None = None,
 ) -> DimensionamentoCircular:
     """
     Avalia um diametro comercial fixo escolhido pelo usuario com N linhas em
@@ -243,7 +291,7 @@ def avaliar_circular_manual(
 
     h_op = lamina_para_vazao_circular(Q_por_linha, D_m, S_m_per_m, n)
     op = manning_circular_partial(D_m, h_op, S_m_per_m, n)
-    warnings = validar_velocidade(op.v_m_s)
+    warnings = validar_velocidade(op.v_m_s, material=material, fr=op.Fr)
     if h_op > h_limite:
         warnings.insert(
             0,
@@ -277,6 +325,18 @@ class EscoamentoRetangular:
     Q_m3_s: float
     S_m_per_m: float
     n: float
+
+    @property
+    def Fr(self) -> float:
+        """Numero de Froude. Secao retangular: D_h = A/T = h (espelho T = b)."""
+        if self.h_m <= 0:
+            return 0.0
+        return self.v_m_s / math.sqrt(GRAV * self.h_m)
+
+    @property
+    def regime(self) -> str:
+        fr = self.Fr
+        return "subcrítico" if fr < 0.95 else ("supercrítico" if fr > 1.05 else "crítico")
 
 
 def manning_rectangular(b_m: float, h_m: float, S_m_per_m: float, n: float) -> EscoamentoRetangular:
@@ -318,6 +378,14 @@ class DimensionamentoBoxComercial:
     operacao: EscoamentoRetangular
     warnings: list[str]
 
+    @property
+    def Q_capacidade_por_linha_m3_s(self) -> float:
+        """Capacidade REAL de uma linha na lamina-limite (nao o Q de projeto)."""
+        return manning_rectangular(
+            self.b_m, self.lamina_max_permitida,
+            self.operacao.S_m_per_m, self.operacao.n,
+        ).Q_m3_s
+
 
 def size_box_culvert_commercial(
     Q_projeto_m3_s: float,
@@ -327,6 +395,7 @@ def size_box_culvert_commercial(
     lamina_max_ratio: float = 0.85,
     secoes: list[tuple[float, float]] | None = None,
     n_linhas: int = 1,
+    material: str | None = None,
 ) -> DimensionamentoBoxComercial:
     """
     Seleciona a menor secao comercial (b x h) que atenda a vazao de projeto
@@ -358,7 +427,7 @@ def size_box_culvert_commercial(
                 fator_seguranca=fator_seguranca,
                 lamina_max_permitida=h_limite,
                 operacao=op,
-                warnings=validar_velocidade(op.v_m_s),
+                warnings=validar_velocidade(op.v_m_s, material=material, fr=op.Fr),
             )
 
     raise ValueError(
@@ -378,6 +447,7 @@ def avaliar_box_manual(
     fator_seguranca: float = 1.10,
     lamina_max_ratio: float = 0.85,
     n_linhas: int = 1,
+    material: str | None = None,
 ) -> DimensionamentoBoxComercial:
     """Avalia uma secao (b, h) escolhida pelo usuario com N linhas."""
     if n_linhas < 1:
@@ -387,7 +457,7 @@ def avaliar_box_manual(
 
     h_op = lamina_para_vazao_retangular(Q_por_linha, b_m, h_total_m, S_m_per_m, n)
     op = manning_rectangular(b_m, h_op, S_m_per_m, n)
-    warnings = validar_velocidade(op.v_m_s)
+    warnings = validar_velocidade(op.v_m_s, material=material, fr=op.Fr)
     if h_op > h_limite:
         warnings.insert(
             0,
@@ -413,6 +483,7 @@ def size_box_culvert(
     razao_b_h: float = 1.5,
     fator_seguranca: float = 1.10,
     lamina_max_ratio: float = 0.85,
+    material: str | None = None,
 ) -> dict:
     """
     Dimensionamento iterativo: fixa b/h e acha h via brentq tal que
@@ -448,7 +519,7 @@ def size_box_culvert(
         "Q_projeto_m3_s": Q_projeto_m3_s,
         "Q_dim_m3_s": Q_dim,
         "fator_seguranca": fator_seguranca,
-        "warnings": validar_velocidade(op.v_m_s),
+        "warnings": validar_velocidade(op.v_m_s, material=material, fr=op.Fr),
     }
 
 
@@ -456,16 +527,36 @@ def size_box_culvert(
 # Validacoes
 # ---------------------------------------------------------------------------
 
-def validar_velocidade(v_m_s: float) -> list[str]:
+def validar_velocidade(
+    v_m_s: float,
+    *,
+    material: str | None = None,
+    fr: float | None = None,
+) -> list[str]:
+    """
+    Alertas de velocidade e regime. O limite superior vem da tabela
+    `VELOCIDADE_MAX_MATERIAL` (se `material` for informado); senao usa o fallback
+    `V_MAX_CONCRETO`. Se `fr` (Froude) for dado, alerta regime supercritico.
+    """
     warnings = []
     if v_m_s < V_MIN_ASSENTAMENTO:
         warnings.append(
             f"Velocidade {v_m_s:.2f} m/s < {V_MIN_ASSENTAMENTO:.2f} m/s: "
             f"risco de sedimentacao/assoreamento."
         )
-    if v_m_s > V_MAX_CONCRETO:
+    v_max = VELOCIDADE_MAX_MATERIAL.get(material) if material else None
+    if v_max is None:
+        v_max = V_MAX_CONCRETO
+    if v_m_s > v_max:
+        mat_txt = f" para '{material}'" if material else ""
         warnings.append(
-            f"Velocidade {v_m_s:.2f} m/s > {V_MAX_CONCRETO:.2f} m/s: "
-            f"risco de abrasao/erosao em concreto."
+            f"Velocidade {v_m_s:.2f} m/s > maxima admissivel {v_max:.1f} m/s"
+            f"{mat_txt}: risco de abrasao/erosao do revestimento."
+        )
+    if fr is not None and fr > 1.05:
+        warnings.append(
+            f"Escoamento supercritico (Fr={fr:.2f}): sujeito a ondas e ressalto "
+            f"hidraulico. Preveja transicoes suaves e protecao, ou reduza a "
+            f"declividade."
         )
     return warnings

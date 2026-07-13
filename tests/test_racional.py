@@ -32,7 +32,7 @@ def test_select_method_por_area():
     assert hidrograma.select_method(2.0) == "Racional"
     assert hidrograma.select_method(2.5) == "SCS-HU"
     assert hidrograma.select_method(250.0) == "SCS-HU"
-    assert hidrograma.select_method(500.0).startswith("Modelo distribuido")
+    assert hidrograma.select_method(500.0) == "Distribuído"
 
 
 def test_C_uso_solo_tem_chaves():

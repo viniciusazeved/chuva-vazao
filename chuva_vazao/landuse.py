@@ -162,10 +162,43 @@ CN_POR_CATEGORIA_E_GH: dict[str, dict[str, float]] = {
 #     C: argila media
 #     D: argila pesada, baixa infiltracao
 
-def classify_hydrological_group(sand_pct: np.ndarray, clay_pct: np.ndarray) -> np.ndarray:
+_ORDEM_GH = np.array(["A", "B", "C", "D"])
+_GH_PARA_IDX = {"A": 0, "B": 1, "C": 2, "D": 3}
+
+
+def _agravar_gh_por_declividade(
+    gh: np.ndarray,
+    slope_pct: np.ndarray,
+    limiar1: float = 20.0,
+    limiar2: float = 45.0,
+) -> np.ndarray:
+    """
+    Agrava o grupo hidrologico em encostas ingremes (um nivel acima de `limiar1`,
+    dois acima de `limiar2`), limitado a D.
+
+    Justificativa: a classificacao por textura pura (mesmo a de Sartori) assume
+    solo profundo e bem drenado. Em encostas ingremes (ex.: Serra do Mar) o solo
+    e raso (Cambissolo, Neossolo Litolico), o lencol aflora e a resposta e mais
+    rapida — comportamento de grupo C/D mesmo com textura de B. Sem esse ajuste,
+    floresta de encosta sai com CN de floresta/B (~55), subestimando o escoamento.
+    """
+    base = np.vectorize(_GH_PARA_IDX.get)(gh).astype(int)
+    ag = np.zeros_like(base)
+    ag[slope_pct > limiar1] = 1
+    ag[slope_pct > limiar2] = 2
+    return _ORDEM_GH[np.clip(base + ag, 0, 3)]
+
+
+def classify_hydrological_group(
+    sand_pct: np.ndarray,
+    clay_pct: np.ndarray,
+    slope_pct: np.ndarray | None = None,
+) -> np.ndarray:
     """
     Grupo hidrologico NRCS (A/B/C/D) adaptado a solos TROPICAIS brasileiros,
-    seguindo o principio de Sartori et al. (2005).
+    seguindo o principio de Sartori et al. (2005). Se `slope_pct` (declividade
+    por pixel, %) for informado, o grupo e AGRAVADO em encostas ingremes
+    (ver `_agravar_gh_por_declividade`).
 
     Latossolos e Argissolos — predominantes no Brasil — sao argilosos mas muito
     porosos e bem estruturados: infiltram/drenam bem APESAR da textura argilosa.
@@ -189,6 +222,9 @@ def classify_hydrological_group(sand_pct: np.ndarray, clay_pct: np.ndarray) -> n
     gh[(sand_pct < 25) & (clay_pct >= 30)] = "C"
     # D: muito argilosos e mal drenados (hidromorficos, expansivos, rasos)
     gh[(sand_pct < 15) & (clay_pct >= 55)] = "D"
+    # Agravamento por relevo: encostas ingremes tem solo raso e resposta rapida.
+    if slope_pct is not None:
+        gh = _agravar_gh_por_declividade(gh, np.asarray(slope_pct))
     return gh
 
 
@@ -207,6 +243,7 @@ class LanduseResult:
     fonte_solo: str    # 'soilgrids_v2'
     composicao_lulc: pd.DataFrame = field(default_factory=pd.DataFrame)
     composicao_gh: pd.DataFrame = field(default_factory=pd.DataFrame)
+    declividade_considerada: bool = False  # GH agravado por relevo (DEM)?
 
     def resumo_texto(self) -> str:
         lines = [
@@ -288,10 +325,46 @@ def _read_raster_aligned_to(
 # Calculo C/CN ponderado
 # ---------------------------------------------------------------------------
 
+def _slope_pct_aligned(
+    geom: BaseGeometry,
+    ref_transform,
+    ref_crs,
+    ref_shape: tuple[int, int],
+) -> np.ndarray:
+    """
+    Declividade por pixel (%) do DEM Copernicus reamostrada para o grid do LULC.
+
+    slope_% = 100 · |grad(z)| = 100 · sqrt((dz/dx)^2 + (dz/dy)^2). O grid do LULC
+    esta em graus (EPSG:4326); o espacamento em metros usa 111.320 m/grau (lat)
+    e cos(lat) (lon).
+    """
+    from chuva_vazao import gee_client  # noqa: PLC0415
+
+    dem_path = gee_client.fetch_dem_copernicus(geom)
+    dem_aligned = np.zeros(ref_shape, dtype=np.float32)
+    with rasterio.open(dem_path) as src_dem:
+        reproject(
+            source=rasterio.band(src_dem, 1),
+            destination=dem_aligned,
+            src_transform=src_dem.transform,
+            src_crs=src_dem.crs,
+            dst_transform=ref_transform,
+            dst_crs=ref_crs,
+            resampling=Resampling.bilinear,
+        )
+    minx, miny, maxx, maxy = geom.bounds
+    lat_c = (miny + maxy) / 2.0
+    dx_m = abs(ref_transform.a) * 111_320.0 * float(np.cos(np.deg2rad(lat_c)))
+    dy_m = abs(ref_transform.e) * 111_320.0
+    dzdy, dzdx = np.gradient(dem_aligned.astype(np.float64), dy_m, dx_m)
+    return 100.0 * np.sqrt(dzdx ** 2 + dzdy ** 2)
+
+
 def compute_c_and_cn(
     geom: BaseGeometry,
     fonte_lulc: str = "mapbiomas",
     ano_lulc: int = 2023,
+    considerar_declividade: bool = True,
 ) -> LanduseResult:
     """
     Calcula C_racional e CN_scs automaticamente para a bacia.
@@ -304,6 +377,9 @@ def compute_c_and_cn(
            com multipart).
     fonte_lulc : 'mapbiomas' (30 m, Brasil) ou 'dynamic_world' (10 m, global).
     ano_lulc : ano do produto LULC.
+    considerar_declividade : agrava o grupo hidrologico em encostas ingremes
+           (DEM Copernicus). Se o download/calculo falhar, degrada para a
+           classificacao so por textura (sem erro).
     """
     # 1. Baixa LULC
     if fonte_lulc == "mapbiomas":
@@ -376,12 +452,24 @@ def compute_c_and_cn(
     sand_pct = sand_aligned / 10.0
     clay_pct = clay_aligned / 10.0
 
-    # 5. Vetoriza pixels validos nos tres rasters alinhados
+    # Declividade por pixel (%) do DEM, alinhada ao grid do LULC (robusto:
+    # se o GEE falhar, degrada para classificacao so por textura).
+    slope_grid = None
+    declividade_ok = False
+    if considerar_declividade:
+        try:
+            slope_grid = _slope_pct_aligned(geom, lulc_transform, lulc_crs, target_shape)
+            declividade_ok = True
+        except Exception:
+            slope_grid = None
+
+    # 5. Vetoriza pixels validos nos rasters alinhados
     sand_valid = sand_pct[mask_inside]
     clay_valid = clay_pct[mask_inside]
     lulc_valid = np.asarray(lulc_arr)[mask_inside]
+    slope_valid = slope_grid[mask_inside] if slope_grid is not None else None
 
-    gh_valid = classify_hydrological_group(sand_valid, clay_valid)
+    gh_valid = classify_hydrological_group(sand_valid, clay_valid, slope_pct=slope_valid)
 
     # 5. Converte lulc em categoria
     cat_valid = np.array(
@@ -444,4 +532,5 @@ def compute_c_and_cn(
         fonte_solo="soilgrids_v2_0-5cm",
         composicao_lulc=comp_lulc,
         composicao_gh=comp_gh,
+        declividade_considerada=declividade_ok,
     )

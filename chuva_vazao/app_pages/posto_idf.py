@@ -166,6 +166,22 @@ else:
         c2.metric("b (constante, min)", f"{params.constante_duracao:.2f}")
         st.metric("c (expoente dur)", f"{params.expoente_duracao:.4f}")
 
+        if params.rmse_rel is not None:
+            emax = params.erro_max_rel or 0.0
+            msg = (
+                f"Qualidade do ajuste tabela → equação: RMSE {params.rmse_rel:.1%}, "
+                f"erro máximo {emax:.1%}."
+            )
+            if params.rmse_rel > 0.10 or emax > 0.20:
+                st.warning(
+                    msg + " Um único jogo K/a/b/c distorce as pontas da curva "
+                    "(durações muito curtas e muito longas). Confira a chuva de "
+                    "projeto na duração adotada contra a tabela original do "
+                    "IDF-generator antes de fechar o dimensionamento."
+                )
+            else:
+                st.caption(msg + " Ajuste aderente à tabela.")
+
     with col2:
         duracoes = [5, 10, 15, 30, 60, 120, 360, 720, 1440]
         TRs = [2, 5, 10, 25, 50, 100]

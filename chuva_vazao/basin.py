@@ -168,10 +168,11 @@ class BasinMetrics:
     area_km2: float
     perimeter_km: float
     flowlength_km: float
-    slope_mean_pct: float
+    slope_mean_pct: float          # declividade do TALVEGUE (dH_talvegue / L)
     elev_max_m: float
     elev_min_m: float
-    delta_h_m: float
+    delta_h_m: float               # amplitude altimetrica da bacia (Zmax - Zmin)
+    delta_h_talvegue_m: float = 0.0  # queda ao longo do talvegue (nascente -> exutorio)
 
     def summary_dict(self) -> dict:
         """
@@ -186,7 +187,8 @@ class BasinMetrics:
             "S media (%)": round(self.slope_mean_pct, 2),
             "Z max (m)": round(self.elev_max_m, 1),
             "Z min (m)": round(self.elev_min_m, 1),
-            "dH (m)": round(self.delta_h_m, 1),
+            "dH bacia (m)": round(self.delta_h_m, 1),
+            "dH talvegue (m)": round(self.delta_h_talvegue_m, 1),
         }
 
 
@@ -493,6 +495,7 @@ def delineate_basin(
     # 12. Caminho mais longo (canal principal, do topo da bacia ate o exutorio)
     longest_shp_rel = "longest_flowpath.shp"
     longest_path_m: float | None = None
+    dh_talvegue_m: float | None = None
     try:
         wbt.longest_flowpath(
             dem=breached, basins=basin_rst, output=longest_shp_rel,
@@ -506,6 +509,19 @@ def delineate_basin(
                 longest_path_m = float(longest_gdf["LENGTH"].max())
             else:
                 longest_path_m = float(longest_gdf.geometry.length.max())
+            # Queda ao longo do TALVEGUE: cotas amostradas do DEM nas duas pontas
+            # do caminho mais longo (nascente e exutorio). E a queda correta para
+            # a declividade do tc — NAO o Zmax-Zmin da bacia inteira (que inclui
+            # o topo do divisor e superestima S, subestimando o tc).
+            try:
+                ep = _endpoints_linha(longest_gdf.geometry.union_all())
+                if ep is not None:
+                    with rasterio.open(dem_utm) as _dsrc:
+                        zs = [v[0] for v in _dsrc.sample([ep[0], ep[1]])]
+                    if len(zs) == 2 and all(z is not None for z in zs):
+                        dh_talvegue_m = abs(float(zs[0]) - float(zs[1]))
+            except Exception:
+                dh_talvegue_m = None
     except Exception:
         longest_path_m = None
 
@@ -538,6 +554,7 @@ def delineate_basin(
     metrics = _compute_metrics(
         basin_gdf_utm, streams_in_basin_utm, dem_utm,
         longest_path_m=longest_path_m,
+        dh_talvegue_m=dh_talvegue_m,
     )
 
     # Reprojetar para WGS84 (mapa)
@@ -574,11 +591,26 @@ def delineate_basin(
     )
 
 
+def _endpoints_linha(geom):
+    """Pontos extremos (inicio, fim) de uma LineString/MultiLineString (x, y)."""
+    try:
+        if geom.geom_type == "LineString":
+            cs = list(geom.coords)
+            return (cs[0][:2], cs[-1][:2])
+        if geom.geom_type == "MultiLineString":
+            parts = list(geom.geoms)
+            return (list(parts[0].coords)[0][:2], list(parts[-1].coords)[-1][:2])
+    except Exception:
+        return None
+    return None
+
+
 def _compute_metrics(
     basin_gdf_utm: gpd.GeoDataFrame,
     streams_gdf_utm: gpd.GeoDataFrame,
     dem_utm_path: Path,
     longest_path_m: float | None = None,
+    dh_talvegue_m: float | None = None,
 ) -> BasinMetrics:
     """
     Calcula A, P, L, S, DH a partir dos GDFs em UTM e do DEM reprojetado.
@@ -618,7 +650,13 @@ def _compute_metrics(
         raise RuntimeError(f"Falha ao extrair elevacoes: {exc}") from exc
 
     delta_h = elev_max - elev_min
-    slope_pct = (delta_h / flow_length_m * 100.0) if flow_length_m > 0 else 0.0
+    # Declividade do tc usa a queda do TALVEGUE (nascente->exutorio). Fallback
+    # para a amplitude da bacia quando o talvegue nao pode ser amostrado.
+    dh_talvegue = (
+        dh_talvegue_m if (dh_talvegue_m is not None and dh_talvegue_m > 0)
+        else delta_h
+    )
+    slope_pct = (dh_talvegue / flow_length_m * 100.0) if flow_length_m > 0 else 0.0
 
     return BasinMetrics(
         area_km2=area_m2 / 1e6,
@@ -628,4 +666,5 @@ def _compute_metrics(
         elev_max_m=elev_max,
         elev_min_m=elev_min,
         delta_h_m=delta_h,
+        delta_h_talvegue_m=dh_talvegue,
     )

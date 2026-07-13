@@ -375,6 +375,13 @@ with c3:
         )
     else:
         cota_jus = None
+        if cc == "normal":
+            st.caption(
+                "⚠️ Em foz no mar ou estuário, a lâmina de jusante é imposta pelo "
+                "**nível do mar / maré de projeto**, não pela profundidade normal. "
+                "Nesses casos escolha 'cota' e informe a maré, senão o remanso e a "
+                "área alagada saem subestimados."
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -522,6 +529,19 @@ df = perfil.to_dataframe()
 mancha = res["mancha"]
 for a in mancha.avisos:
     st.warning(a)
+
+# Aviso de datum: cotas negativas indicam MDT local (topobatimétrico) num
+# referencial vertical próprio, diferente do DEM da bacia (Copernicus).
+_z_min = min((s.secao.z_thalweg for s in ger.secoes), default=0.0)
+if _z_min < 0:
+    st.info(
+        f"As cotas deste MDT partem de valores negativos (mínimo ≈ {_z_min:.1f} m). "
+        "É um MDT local (topobatimétrico) num datum vertical próprio, diferente "
+        "do DEM da bacia da Página 0 (Copernicus, referido ao nível do mar). O "
+        "cálculo é internamente consistente, mas **não compare estas cotas com as "
+        "da bacia** sem reconciliar o referencial — e, se a foz é no mar, ancore o "
+        "contorno de jusante na maré de projeto ('cota')."
+    )
 
 m1, m2, m3, m4, m5 = st.columns(5)
 m1.metric("Seções", len(ger.secoes))

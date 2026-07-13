@@ -354,7 +354,11 @@ if bres is not None and metrics is not None:
     cols = st.columns(4)
     cols[0].metric("Z máx", f"{d['Z max (m)']:g} m")
     cols[1].metric("Z mín", f"{d['Z min (m)']:g} m")
-    cols[2].metric("ΔH", f"{d['dH (m)']:g} m")
+    cols[2].metric(
+        "ΔH talvegue", f"{d['dH talvegue (m)']:g} m",
+        help=f"Queda ao longo do talvegue (nascente→exutório), usada no tc. "
+             f"Amplitude altimétrica da bacia (Zmáx−Zmín) = {d['dH bacia (m)']:g} m.",
+    )
     metodo_rec = (
         "Racional" if metrics.area_km2 <= 2
         else "SCS-HU" if metrics.area_km2 <= 250
@@ -369,11 +373,20 @@ if bres is not None and metrics is not None:
 
     if st.button("Aplicar na Página 3 (Chuva-Vazão)", type="primary"):
         st.session_state.area_km2 = float(metrics.area_km2)
-        # L_km e H_m para calculo de tc
+        # L_km e H_m para calculo de tc. H_m usa a queda ao longo do TALVEGUE
+        # (nascente->exutorio), nao a amplitude Zmax-Zmin da bacia — esta ultima
+        # inclui o topo do divisor e superestima a declividade do canal.
+        dh_tc = metrics.delta_h_talvegue_m or metrics.delta_h_m
         st.session_state["bacia_L_km"] = float(metrics.flowlength_km)
-        st.session_state["bacia_H_m"] = float(metrics.delta_h_m)
+        st.session_state["bacia_H_m"] = float(dh_tc)
+        nota_dh = ""
+        if metrics.delta_h_talvegue_m and metrics.delta_h_talvegue_m > 0:
+            nota_dh = (
+                f" (ΔH do talvegue; amplitude da bacia = "
+                f"{metrics.delta_h_m:.0f} m)"
+            )
         st.success(
             f"Bacia aplicada: A = {metrics.area_km2:.3f} km², "
-            f"L = {metrics.flowlength_km:.3f} km, ΔH = {metrics.delta_h_m:.1f} m. "
+            f"L = {metrics.flowlength_km:.3f} km, ΔH = {dh_tc:.1f} m{nota_dh}. "
             "Vá para a Página 3 para calcular tc e Q."
         )
