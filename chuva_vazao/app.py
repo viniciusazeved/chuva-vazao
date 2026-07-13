@@ -116,11 +116,14 @@ pg = st.navigation({
     ],
 })
 
-_LOGO_LAPLA = Path(__file__).parent / "assets" / "logo_lapla.png"
+from chuva_vazao.identidade import identidade_ativa
+
+_IDENTIDADE = identidade_ativa()
+_LOGO_PATH = Path(_IDENTIDADE.get("logo_path") or "")
 
 with st.sidebar:
-    if _LOGO_LAPLA.exists():
-        st.image(str(_LOGO_LAPLA), use_container_width=True)
+    if _LOGO_PATH.is_file():
+        st.image(str(_LOGO_PATH), use_container_width=True)
     st.markdown(
         "<h1 style='text-align:center; margin:-12px 0 4px 0; "
         "font-size:1.7rem; font-weight:700; letter-spacing:-0.5px;'>"
@@ -164,11 +167,6 @@ with st.sidebar:
         st.caption("Inundação 1D calculada ✓")
 
     st.divider()
-    st.caption(
-        "**LAPLA** — Laboratório de Planejamento Ambiental\n\n"
-        "FECFAU / Unicamp\n\n"
-        "[Repositório](https://github.com/viniciusazeved/chuva-vazao) · "
-        "[IDF-generator](https://idf-generator.streamlit.app) (app irmã)"
-    )
+    st.caption(_IDENTIDADE["creditos_sidebar"])
 
 pg.run()

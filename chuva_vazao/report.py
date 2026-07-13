@@ -34,13 +34,13 @@ from chuva_vazao.idf import IDFParams
 # Paleta e constantes de estilo
 # ---------------------------------------------------------------------------
 
-COLOR_PRIMARY = (31, 78, 121)        # #1F4E79  azul escuro tecnico
-COLOR_PRIMARY_SOFT = (220, 232, 244) # azul muito claro p/ fundos de header
-COLOR_ACCENT = (46, 125, 50)         # #2E7D32  verde tecnico (destaques)
-COLOR_TEXT = (55, 71, 79)            # #37474F  cinza-grafite
-COLOR_MUTED = (120, 130, 140)
-COLOR_RULE = (200, 210, 218)
-COLOR_ROW_ALT = (245, 247, 250)
+COLOR_PRIMARY = (22, 66, 91)         # #16425B  azul-petroleo Azevedo (titulos, header de tabela)
+COLOR_PRIMARY_SOFT = (219, 231, 237) # #DBE7ED  tinta clara do primario (fundos de header)
+COLOR_ACCENT = (46, 125, 50)         # #2E7D32  verde-energia Azevedo (destaques)
+COLOR_TEXT = (52, 58, 64)            # #343A40  cinza-grafite do corpo de texto
+COLOR_MUTED = (108, 117, 125)        # #6C757D  legendas, header/footer
+COLOR_RULE = (198, 210, 216)         # linhas divisorias sutis
+COLOR_ROW_ALT = (243, 246, 248)      # zebra de tabelas
 
 MARGIN_LR = 18      # margem esquerda/direita em mm
 MARGIN_TOP = 18
@@ -152,16 +152,20 @@ class RelatorioInputs:
 # ---------------------------------------------------------------------------
 
 class RelatorioPDF(FPDF):
-    def __init__(self, titulo_capa: str, subtitulo: str = ""):
+    def __init__(self, titulo_capa: str, subtitulo: str = "",
+                 identidade: dict | None = None):
         super().__init__(orientation="P", unit="mm", format="A4")
         self.titulo_capa = titulo_capa
         self.subtitulo = subtitulo
+        # Marca ativa (default Azevedo); override parcial e mesclado por cima.
+        from chuva_vazao.identidade import identidade_ativa  # noqa: PLC0415
+        self.identidade = identidade_ativa(identidade)
         self.set_margins(MARGIN_LR, MARGIN_TOP, MARGIN_LR)
         self.set_auto_page_break(auto=True, margin=MARGIN_BOT)
         self._section_counter = 0
 
     # ---- Header / footer -------------------------------------------------
-    # A capa e sempre a pag. 1 e renderiza seu proprio rodape (LAPLA + creditos);
+    # A capa e sempre a pag. 1 e renderiza seu proprio rodape (marca + creditos);
     # header/footer padrao so entram a partir da pag. 2.
     def header(self):
         if self.page_no() == 1:
@@ -189,7 +193,7 @@ class RelatorioPDF(FPDF):
         self.set_text_color(*COLOR_MUTED)
         self.cell(
             0, 5,
-            _latin1_safe("Gerado por Chuva - Vazão  ·  LAPLA — FECFAU/Unicamp"),
+            _latin1_safe(self.identidade["rodape_paginas"]),
             align="C",
         )
         self.set_text_color(*COLOR_TEXT)
@@ -351,13 +355,22 @@ class RelatorioPDF(FPDF):
         self.add_page()
         self.set_text_color(*COLOR_TEXT)
 
-        # Logo LAPLA centralizado no topo (identidade visual)
-        logo_path = Path(__file__).parent / "assets" / "logo_lapla.png"
-        if logo_path.exists():
-            logo_w = 32
-            logo_h = logo_w / 0.923  # ~34.7mm (proporcao do PNG: 710x769)
+        # Logo da marca ativa centralizado no topo (identidade visual).
+        # Largura por orientacao: logo horizontal (aspecto baixo) ganha mais
+        # largura; quadrado/vertical fica compacto.
+        logo_path = Path(self.identidade.get("logo_path") or "")
+        if logo_path.is_file():
+            try:
+                from PIL import Image  # noqa: PLC0415 — dependencia do fpdf2
+
+                with Image.open(logo_path) as im:
+                    aspecto = im.height / im.width if im.width else 1.0
+            except Exception:  # noqa: BLE001 — proporcao default se PIL falhar
+                aspecto = 1.0
+            logo_w = 56.0 if aspecto < 0.6 else 32.0
+            logo_h = logo_w * aspecto
             x = (PAGE_W - logo_w) / 2
-            y_logo = 22
+            y_logo = 24
             self.image(str(logo_path), x=x, y=y_logo, w=logo_w)
             self.set_y(y_logo + logo_h + 8)
         else:
@@ -389,21 +402,24 @@ class RelatorioPDF(FPDF):
 
         # Rodape da capa (sem auto_page_break pra nao quebrar pra pag.2)
         self.set_auto_page_break(auto=False)
-        self.set_y(-30)
+        rodape_sub = self.identidade.get("rodape_capa_sub", "")
+        self.set_y(-34 if rodape_sub else -30)
         self.set_font("Helvetica", "B", 9)
         self.set_text_color(*COLOR_PRIMARY)
         self.cell(
             0, 5,
-            _latin1_safe("LAPLA — Laboratorio de Planejamento Ambiental"),
+            _latin1_safe(self.identidade["rodape_capa_titulo"]),
             align="C", new_x="LMARGIN", new_y="NEXT",
         )
-        self.set_font("Helvetica", "", 8)
-        self.set_text_color(*COLOR_MUTED)
-        self.cell(
-            0, 5, "FECFAU / Unicamp",
-            align="C", new_x="LMARGIN", new_y="NEXT",
-        )
+        if rodape_sub:
+            self.set_font("Helvetica", "", 8)
+            self.set_text_color(*COLOR_MUTED)
+            self.cell(
+                0, 5, _latin1_safe(rodape_sub),
+                align="C", new_x="LMARGIN", new_y="NEXT",
+            )
         self.set_font("Helvetica", "I", 8)
+        self.set_text_color(*COLOR_MUTED)
         self.cell(
             0, 5,
             _latin1_safe(
