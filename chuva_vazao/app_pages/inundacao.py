@@ -104,17 +104,79 @@ def _fig_relevo_mancha(mancha) -> go.Figure:
 
 
 def _prof_rgba(mancha):
-    """Array RGBA (uint8) da profundidade p/ ImageOverlay no folium. None se falhar."""
+    """Array RGBA (uint8) da profundidade p/ ImageOverlay no folium. None se falhar.
+
+    Usa `matplotlib.colormaps[...]` (API estavel) e NAO `cm.get_cmap`, que foi
+    removida no matplotlib 3.11 — com o antigo, a mancha sumia no Cloud (rebuild
+    pegava o matplotlib novo) e sobrava so o contorno.
+    """
     try:
         import numpy as np  # noqa: PLC0415
-        from matplotlib import cm  # noqa: PLC0415
+        from matplotlib import colormaps  # noqa: PLC0415
         from matplotlib.colors import Normalize  # noqa: PLC0415
 
-        prof = mancha.profundidade
+        prof = np.asarray(mancha.profundidade, dtype=float)
         vmax = max(mancha.prof_max_m, 0.1)
-        rgba = cm.get_cmap("Blues")(Normalize(0.0, vmax)(prof))
+        rgba = colormaps["Blues"](Normalize(0.0, vmax)(prof))
         rgba[..., 3] = np.where(np.isfinite(prof), 0.78, 0.0)
         return (rgba * 255).astype("uint8")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _hillshade_overlay(mdt_fonte, max_px: int = 800):
+    """
+    Relevo sombreado (hillshade colorido) do MDT importado, para sobrepor no mapa
+    de desenho do eixo — assim dá pra enxergar o talvegue/vale e marcar o eixo no
+    leito real, não só na imagem de satélite (onde a mata esconde o rio).
+
+    Lê o MDT inteiro reamostrado (leve, <= max_px no maior lado) e devolve
+    (rgba uint8, [[sul, oeste], [norte, leste]]) em EPSG:4326, ou None se falhar.
+    """
+    try:
+        import numpy as np  # noqa: PLC0415
+        import rasterio  # noqa: PLC0415
+        from rasterio.enums import Resampling  # noqa: PLC0415
+        from rasterio.warp import transform_bounds  # noqa: PLC0415
+        from matplotlib import colormaps  # noqa: PLC0415
+        from matplotlib.colors import LightSource, Normalize  # noqa: PLC0415
+
+        with rasterio.open(str(mdt_fonte)) as src:
+            scale = max(1, int(max(src.height, src.width) / max_px))
+            out_h = max(1, src.height // scale)
+            out_w = max(1, src.width // scale)
+            arr = src.read(
+                1, out_shape=(1, out_h, out_w), resampling=Resampling.bilinear,
+            ).astype("float64")
+            nodata = src.nodata
+            b = src.bounds
+            crs = src.crs
+
+        if nodata is not None:
+            arr = np.where(arr == nodata, np.nan, arr)
+        finito = np.isfinite(arr)
+        if not finito.any():
+            return None
+        zmin = float(np.nanmin(arr))
+        zmax = float(np.nanmax(arr))
+        z_fill = np.where(finito, arr, zmin)   # nodata -> min (nao quebra o shade)
+
+        ls = LightSource(azdeg=315, altdeg=45)
+        norm = Normalize(zmin, zmax if zmax > zmin else zmin + 1.0)
+        rgb = ls.shade(
+            z_fill, cmap=colormaps["terrain"], norm=norm,
+            blend_mode="soft", vert_exag=3.0,
+        )  # (h, w, 4) float 0..1
+        rgba = (rgb * 255).astype("uint8")
+        rgba[..., 3] = np.where(finito, 205, 0).astype("uint8")  # nodata transparente
+
+        if crs is not None and crs.to_epsg() != 4326:
+            w_, s_, e_, n_ = transform_bounds(
+                crs, "EPSG:4326", b.left, b.bottom, b.right, b.top,
+            )
+        else:
+            w_, s_, e_, n_ = b.left, b.bottom, b.right, b.top
+        return rgba, [[s_, w_], [n_, e_]]
     except Exception:  # noqa: BLE001
         return None
 
@@ -440,6 +502,13 @@ with col_ctrl:
         "mapa). Pode ir de jusante p/ montante ou o contrário — o sentido é "
         "detectado pelo thalweg."
     )
+    mostrar_relevo = st.checkbox(
+        "Relevo do MDT sobre o mapa", value=True,
+        help="Sobrepõe o relevo sombreado (hillshade) do MDT importado sobre o "
+             "satélite, para você enxergar o talvegue/vale e marcar o eixo no "
+             "leito real — onde a mata esconde o rio na imagem. Alterne as camadas "
+             "no controle do canto do mapa.",
+    )
     calcular = st.button(
         "🌊 Gerar seções e calcular", type="primary", use_container_width=True,
     )
@@ -448,11 +517,23 @@ with col_map:
     m = folium.Map(location=center, zoom_start=15)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri", name="Satélite",
+        attr="Esri", name="Satélite (ortofoto)",
     ).add_to(m)
+    # Relevo do MDT importado como camada, enquadrando o mapa na extensão do DEM.
+    if mostrar_relevo:
+        _hs = _hillshade_overlay(mdt_fonte)
+        if _hs is not None:
+            _rgba, _bnds = _hs
+            folium.raster_layers.ImageOverlay(
+                image=_rgba, bounds=_bnds, opacity=0.6,
+                name="Relevo (MDT importado)", show=True,
+            ).add_to(m)
+            m.fit_bounds(_bnds)
+        else:
+            st.caption("⚠️ Não consegui gerar o relevo do MDT; usando só o satélite.")
     Draw(
         draw_options={
-            "polyline": {"shapeOptions": {"color": "#1f77b4", "weight": 3}},
+            "polyline": {"shapeOptions": {"color": "#e41a1c", "weight": 3}},
             "polygon": False, "rectangle": False, "circle": False,
             "marker": False, "circlemarker": False,
         },
