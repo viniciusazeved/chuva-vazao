@@ -9,7 +9,7 @@ dependencies = [
     "fpdf2>=2.8",
     "geopandas>=0.14",
     "kaleido==0.2.1",
-    "matplotlib>=3.7",
+    "matplotlib>=3.7,<3.11",  # teto: cm.get_cmap foi removida no 3.11; alinha o Cloud a linha 3.10.x testada localmente
     "numpy>=1.24",
     "pandas>=2.0",
     "plotly>=5.18",
