@@ -202,6 +202,8 @@ class BasinResult:
     dem_utm_path: Path              # DEM reprojetado (fica no disco)
     work_dir: Path                  # diretorio de trabalho WBT
     clipped_by_dem: bool = False    # True se a bacia encosta na borda do DEM (truncada)
+    n_fragmentos_removidos: int = 0  # poligonos espurios descartados na vetorizacao
+    area_fragmentos_frac: float = 0.0  # fracao de area que os fragmentos representavam
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +537,10 @@ def delineate_basin(
             "ajustado a nenhum canal — aumente o 'Snap (m)' ou reduza o "
             "'Threshold canal (celulas)' para uma rede de drenagem mais densa."
         )
+    # Descarta fragmentos espurios da vetorizacao (mantem so a bacia conexa).
+    # Feito ANTES de metricas, clip de streams, mapa e recorte de CN, para que
+    # todos usem a geometria limpa.
+    basin_gdf_utm, n_fragmentos, area_frag_frac = _filtrar_fragmentos(basin_gdf_utm)
     stream_gdf_utm = gpd.read_file(work_dir / streams_shp_rel)
     if stream_gdf_utm.crs is None:
         stream_gdf_utm.set_crs(epsg=epsg_utm, inplace=True)
@@ -588,7 +594,39 @@ def delineate_basin(
         dem_utm_path=dem_utm,
         work_dir=work_dir,
         clipped_by_dem=clipped,
+        n_fragmentos_removidos=n_fragmentos,
+        area_fragmentos_frac=area_frag_frac,
     )
+
+
+def _filtrar_fragmentos(
+    gdf: gpd.GeoDataFrame,
+) -> tuple[gpd.GeoDataFrame, int, float]:
+    """
+    Mantem apenas o maior poligono conexo (a bacia real).
+
+    A conversao raster->vetor (RasterToVectorPolygons) gera fragmentos espurios
+    — pixels isolados na borda do watershed — que NAO fazem parte da bacia e
+    inflam area, perimetro e o recorte de LULC/solo (logo o CN). O watershed de
+    um exutorio unico e sempre conexo, entao o maior poligono E a bacia; o resto
+    e ruido da vetorizacao.
+
+    Retorna (gdf_so_o_maior, n_fragmentos_removidos, fracao_de_area_removida).
+    """
+    partes = gdf.geometry.explode(index_parts=False).reset_index(drop=True)
+    partes = partes[(~partes.is_empty) & (partes.geom_type == "Polygon")]
+    if len(partes) <= 1:
+        return gdf, 0, 0.0
+    areas = partes.area
+    area_total = float(areas.sum())
+    idx_maior = areas.idxmax()
+    maior = partes.loc[idx_maior]
+    n_removidos = int(len(partes) - 1)
+    frac_removida = (
+        (area_total - float(maior.area)) / area_total if area_total > 0 else 0.0
+    )
+    limpo = gpd.GeoDataFrame(geometry=[maior], crs=gdf.crs)
+    return limpo, n_removidos, frac_removida
 
 
 def _endpoints_linha(geom):

@@ -126,3 +126,35 @@ def test_basin_metrics_summary_dict(synthetic_dem, synthetic_outlet):
         "A (km2)", "P (km)", "L canal (km)", "S media (%)",
         "Z max (m)", "Z min (m)", "dH bacia (m)", "dH talvegue (m)",
     }
+
+
+# ---------------------------------------------------------------------------
+# _filtrar_fragmentos
+# ---------------------------------------------------------------------------
+
+def test_filtrar_fragmentos_mantem_o_maior():
+    """Fragmentos espurios sao descartados; sobra so a bacia conexa (maior)."""
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+    grande = Polygon([(0, 0), (0, 10), (10, 10), (10, 0)])       # area 100
+    frag1 = Polygon([(20, 20), (20, 21), (21, 21), (21, 20)])    # area 1
+    frag2 = Polygon([(30, 30), (30, 31), (31, 31), (31, 30)])    # area 1
+    gdf = gpd.GeoDataFrame(geometry=[grande, frag1, frag2], crs="EPSG:32723")
+    limpo, n_rem, frac = basin._filtrar_fragmentos(gdf)
+    assert n_rem == 2
+    assert len(limpo) == 1
+    assert limpo.geometry.iloc[0].area == pytest.approx(100.0)
+    assert frac == pytest.approx(2.0 / 102.0, abs=1e-4)
+
+
+def test_filtrar_fragmentos_bacia_unica_intacta():
+    """Bacia com um poligono so nao e alterada."""
+    import geopandas as gpd
+    from shapely.geometry import Polygon
+    gdf = gpd.GeoDataFrame(
+        geometry=[Polygon([(0, 0), (0, 5), (5, 5), (5, 0)])], crs="EPSG:32723",
+    )
+    limpo, n_rem, frac = basin._filtrar_fragmentos(gdf)
+    assert n_rem == 0
+    assert frac == 0.0
+    assert len(limpo) == 1

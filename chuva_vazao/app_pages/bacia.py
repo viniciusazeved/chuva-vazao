@@ -317,6 +317,8 @@ if delinear and dem_path is not None:
         ],
         "metrics": result.metrics.summary_dict(),
         "clipped_by_dem": result.clipped_by_dem,
+        "n_fragmentos_removidos": result.n_fragmentos_removidos,
+        "area_fragmentos_frac": result.area_fragmentos_frac,
         "snap_method": snap_method,
     }
     st.session_state["basin_metrics"] = result.metrics
@@ -339,6 +341,13 @@ if bres is not None and metrics is not None:
             "direção; **aumente o Buffer (graus)** na Fonte do DEM e baixe de novo. "
             "Enquanto isso, **área, perímetro e L do canal estão subestimados**.",
             icon="⚠️",
+        )
+    _nfrag = bres.get("n_fragmentos_removidos", 0)
+    if _nfrag:
+        st.caption(
+            f"🧹 {_nfrag} fragmento(s) espúrio(s) da vetorização descartado(s) "
+            f"({bres.get('area_fragmentos_frac', 0) * 100:.1f}% da área bruta) — "
+            "área, perímetro e recorte de CN usam apenas a bacia conexa."
         )
     st.subheader("Métricas da bacia")
     cols = st.columns(4)
