@@ -722,6 +722,11 @@ def _render_dimensionamento(pdf: RelatorioPDF, inp: RelatorioInputs):
     dim = inp.dimensionamento
     pdf.add_page()
     pdf.add_section("Dimensionamento Hidraulico")
+
+    if dim.get("tipo") == "canal_aberto":
+        _render_canal_aberto(pdf, dim)
+        return
+
     pdf.add_text(
         "Manning (Q = (1/n) · A · R^(2/3) · S^(1/2)). Para conduto circular, "
         "escolhe o menor diametro comercial que atenda a vazao de projeto com "
@@ -775,6 +780,59 @@ def _render_dimensionamento(pdf: RelatorioPDF, inp: RelatorioInputs):
     )
     pdf.add_param("Lamina de operacao:", f"{dim.get('h_op_m', 0):.3f} m")
     pdf.add_param("Velocidade:", f"{dim.get('v_op_m_s', 0):.2f} m/s")
+
+    warnings_list = dim.get("warnings") or []
+    if warnings_list:
+        pdf.add_subsection("Alertas")
+        for w in warnings_list:
+            pdf.add_text(f"• {w}", size=9)
+
+
+def _render_canal_aberto(pdf: RelatorioPDF, dim: dict):
+    """Secao de dimensionamento para canal aberto de macrodrenagem."""
+    pdf.add_text(
+        "Canal aberto de macrodrenagem dimensionado por escoamento uniforme "
+        "(Manning) para UMA secao de dimensoes livres — sem linhas em paralelo. "
+        "A estabilidade do revestimento e verificada por velocidade/tensao "
+        "admissivel; para enrocamento, o D50 minimo vem da tensao trativa "
+        "(tau = gama·y·S no fundo; criterio de Shields)."
+    )
+
+    z = dim.get("z_talude", 0) or 0
+    forma = "Trapezoidal" if z > 0 else "Retangular"
+    pdf.add_kv_row([
+        ("Revestimento:", str(dim.get("revestimento", "?"))),
+        ("Forma:", forma),
+    ])
+    pdf.add_kv_row([
+        ("n de Manning:", f"{dim.get('n', 0):.3f}"),
+        ("Declividade S:", f"{dim.get('S', 0) * 100:.3f} %"),
+    ])
+    pdf.add_kv_row([
+        ("Q de projeto:", f"{dim.get('Q_projeto_m3_s', 0):.3f} m³/s"),
+        ("Regime:", f"{dim.get('regime', '?')} (Fr={dim.get('Fr', 0):.2f})"),
+    ])
+
+    pdf.add_subsection("Secao adotada")
+    pdf.add_param("Largura de fundo b:", f"{dim.get('b_m', 0):.2f} m")
+    if z > 0:
+        pdf.add_param("Talude:", f"{z:.2f}:1 (H:V)")
+    pdf.add_param("Lamina de operacao:", f"{dim.get('y_op_m', 0):.2f} m")
+    pdf.add_param("Altura total (c/ borda livre):", f"{dim.get('altura_total_m', 0):.2f} m")
+    pdf.add_param("Borda livre:", f"{dim.get('borda_livre_m', 0):.2f} m")
+    pdf.add_param("Largura no topo:", f"{dim.get('T_topo_m', 0):.2f} m")
+
+    pdf.add_subsection("Hidraulica e estabilidade (Q de projeto)")
+    pdf.add_param("Velocidade:", f"{dim.get('v_op_m_s', 0):.2f} m/s")
+    pdf.add_param("Area molhada:", f"{dim.get('A_m2', 0):.2f} m²")
+    pdf.add_param("Tensao trativa (fundo):", f"{dim.get('tau_fundo_nm2', 0):.0f} N/m²")
+    pdf.add_param("Tensao trativa (talude):", f"{dim.get('tau_talude_nm2', 0):.0f} N/m²")
+    v_adm = dim.get("v_admissivel_m_s")
+    if v_adm is not None:
+        pdf.add_param("Velocidade admissivel:", f"{v_adm:.1f} m/s")
+    d50 = dim.get("d50_enrocamento_m")
+    if d50 is not None and d50 == d50:  # not NaN
+        pdf.add_param("D50 minimo (enrocamento):", f"{d50 * 100:.0f} cm")
 
     warnings_list = dim.get("warnings") or []
     if warnings_list:

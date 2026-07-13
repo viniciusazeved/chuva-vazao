@@ -103,12 +103,15 @@ with col3:
 
 
 secao = st.radio(
-    "Seção", ["Circular (manilha)", "Retangular (celular)"], horizontal=True,
+    "Seção", ["Circular (manilha)", "Retangular (celular)", "Canal aberto (macrodrenagem)"],
+    horizontal=True,
     help=(
-        "Geometria do conduto. Circular (manilha/tubo) é o padrão para galerias, com "
-        "diâmetros comerciais até 3,0 m. Retangular (bueiro celular/box) atende "
-        "vazões maiores ou travessias largas e baixas. A escolha troca a lista de "
-        "seções comerciais disponíveis abaixo."
+        "Geometria. Circular (manilha/tubo) e o padrão para galerias, até Ø 3,0 m. "
+        "Retangular (bueiro celular/box) usa seções comerciais e admite múltiplas "
+        "células em paralelo. Canal aberto (trapezoidal ou retangular de dimensões "
+        "livres, revestido em gabião, enrocamento, concreto ou grama) é o caso de "
+        "canalizar um rio / macrodrenagem — dimensiona UM canal, sem forçar linhas "
+        "em paralelo, e verifica a estabilidade do revestimento."
     ),
 )
 
@@ -273,7 +276,7 @@ if secao.startswith("Circular"):
 # Retangular
 # ---------------------------------------------------------------------------
 
-else:
+elif secao.startswith("Retangular"):
     col1, col2, col3 = st.columns(3)
     with col1:
         n_linhas = st.number_input(
@@ -424,4 +427,149 @@ else:
             "R_m": round(dim.operacao.R_m, 4),
             "v_m_s": round(dim.operacao.v_m_s, 3),
             "Q_por_linha_m3_s": round(dim.operacao.Q_m3_s, 3),
+        })
+
+
+# ---------------------------------------------------------------------------
+# Canal aberto (macrodrenagem) — UM canal, seção livre, revestimento verificado
+# ---------------------------------------------------------------------------
+
+else:
+    from chuva_vazao import canal_aberto as ca
+
+    st.info(
+        "Dimensiona **um** canal aberto (não força linhas em paralelo). Use para "
+        "canalizar rio / macrodrenagem. O n de Manning vem do revestimento "
+        "escolhido aqui (o campo *Material* acima vale para conduto fechado)."
+    )
+
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        forma = st.radio(
+            "Forma", ["Trapezoidal", "Retangular"], horizontal=True,
+            help=(
+                "Trapezoidal (com taludes) é o típico de canal revestido em gabião "
+                "ou enrocamento. Retangular (paredes verticais) exige contenção "
+                "estrutural, mas ocupa menos largura."
+            ),
+        )
+    with col2:
+        b_fundo = st.number_input(
+            "Largura de fundo b (m)", min_value=0.5, max_value=100.0,
+            value=8.0, step=0.5, format="%.1f",
+            help=(
+                "Largura do fundo do canal. Aumentar b reduz a lâmina e a "
+                "velocidade para a mesma vazão. Faixa usual de macrodrenagem: "
+                "3 a 30 m, conforme a vazão e o espaço disponível."
+            ),
+        )
+    with col3:
+        if forma == "Trapezoidal":
+            z_talude = st.number_input(
+                "Talude z (z:1 H:V)", min_value=0.25, max_value=4.0,
+                value=1.5, step=0.25, format="%.2f",
+                help=(
+                    "Inclinação dos taludes, horizontal por vertical (z:1). 1:1 é "
+                    "íngreme; 1,5:1 a 2:1 são usuais. Enrocamento solto exige talude "
+                    "mais suave que o ângulo de repouso (~41°), ou seja z ≥ ~1,5; "
+                    "gabião (confinado) admite taludes mais íngremes."
+                ),
+            )
+        else:
+            z_talude = 0.0
+            st.caption("Retangular: talude z = 0 (paredes verticais).")
+    with col4:
+        revest = st.selectbox(
+            "Revestimento", ca.REVESTIMENTOS, index=0,
+            help=(
+                "Define o n de Manning e o critério de estabilidade. Gabião/concreto/"
+                "grama são verificados por velocidade e tensão admissíveis; "
+                "enrocamento (rip-rap) tem o D50 dimensionado pela tensão trativa "
+                "(Shields)."
+            ),
+        )
+        st.caption(f"n de Manning = {ca.N_REVESTIMENTO[revest]:.3f}")
+
+    borda_min = st.slider(
+        "Borda livre mínima (m)", 0.2, 1.5, 0.4, 0.1,
+        help=(
+            "Folga vertical entre a lâmina de projeto e o topo do canal. Absorve "
+            "ondas, sobrelevação em curvas e incerteza da vazão. Usual: 0,3 a 0,6 m "
+            "em macrodrenagem; mais em canais rápidos (supercríticos)."
+        ),
+    )
+
+    try:
+        cr = ca.dimensionar_canal_aberto(
+            Q_projeto_m3_s=Q_projeto, b_m=b_fundo, z=z_talude, S=S,
+            revestimento=revest, borda_livre_min_m=borda_min,
+        )
+    except ValueError as exc:
+        st.error(str(exc))
+        st.stop()
+
+    st.subheader("Resultado")
+    forma_lbl = f"Trapezoidal b={cr.b_m:.1f} m, talude {cr.z:.2f}:1" if cr.z > 0 \
+        else f"Retangular b={cr.b_m:.1f} m"
+    st.markdown(f"**Canal {forma_lbl}**, revestimento {cr.revestimento}")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Lâmina de operação", f"{cr.y_op_m:.2f} m")
+    col2.metric("Altura + borda livre", f"{cr.altura_total_m:.2f} m")
+    col3.metric("Velocidade", f"{cr.v_m_s:.2f} m/s")
+    col4.metric("Froude", f"{cr.Fr:.2f} ({cr.regime})")
+
+    col1, col2, col3, col4 = st.columns(4)
+    col1.metric("Largura no topo", f"{cr.T_topo_m:.1f} m")
+    col2.metric("Área molhada", f"{cr.A_m2:.1f} m²")
+    col3.metric("τ fundo", f"{cr.tau_fundo_nm2:.0f} N/m²")
+    if cr.d50_enrocamento_m is not None and cr.d50_enrocamento_m == cr.d50_enrocamento_m:
+        col4.metric("D50 enrocamento", f"{cr.d50_enrocamento_m * 100:.0f} cm")
+    elif cr.v_admissivel_m_s is not None:
+        col4.metric("v admissível", f"{cr.v_admissivel_m_s:.1f} m/s")
+
+    for w in cr.warnings:
+        st.warning(w)
+    if not cr.warnings:
+        st.success("Seção estável: velocidade e tensão dentro dos limites do revestimento.")
+
+    st.session_state.dimensionamento = {
+        "tipo": "canal_aberto",
+        "forma": forma.lower(),
+        "revestimento": cr.revestimento,
+        "n": cr.n,
+        "S": cr.S,
+        "b_m": cr.b_m,
+        "z_talude": cr.z,
+        "y_op_m": cr.y_op_m,
+        "altura_total_m": cr.altura_total_m,
+        "borda_livre_m": cr.borda_livre_m,
+        "v_op_m_s": cr.v_m_s,
+        "Fr": cr.Fr,
+        "regime": cr.regime,
+        "T_topo_m": cr.T_topo_m,
+        "A_m2": cr.A_m2,
+        "R_m": cr.R_m,
+        "tau_fundo_nm2": cr.tau_fundo_nm2,
+        "tau_talude_nm2": cr.tau_talude_nm2,
+        "v_admissivel_m_s": cr.v_admissivel_m_s,
+        "tau_admissivel_nm2": cr.tau_admissivel_nm2,
+        "d50_enrocamento_m": cr.d50_enrocamento_m,
+        "Q_projeto_m3_s": cr.Q_projeto_m3_s,
+        "warnings": cr.warnings,
+    }
+
+    with st.expander("Detalhes hidráulicos e de estabilidade"):
+        st.json({
+            "A_m2": round(cr.A_m2, 3),
+            "P_m": round(cr.P_m, 3),
+            "R_m": round(cr.R_m, 4),
+            "T_topo_m": round(cr.T_topo_m, 3),
+            "v_m_s": round(cr.v_m_s, 3),
+            "Fr": round(cr.Fr, 3),
+            "tau_fundo_N_m2": round(cr.tau_fundo_nm2, 1),
+            "tau_talude_N_m2": round(cr.tau_talude_nm2, 1),
+            "D50_enrocamento_cm": (round(cr.d50_enrocamento_m * 100, 1)
+                                   if cr.d50_enrocamento_m and cr.d50_enrocamento_m == cr.d50_enrocamento_m
+                                   else None),
         })
