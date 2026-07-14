@@ -176,11 +176,16 @@ def _agravar_gh_por_declividade(
     Agrava o grupo hidrologico em encostas ingremes (um nivel acima de `limiar1`,
     dois acima de `limiar2`), limitado a D.
 
-    Justificativa: a classificacao por textura pura (mesmo a de Sartori) assume
-    solo profundo e bem drenado. Em encostas ingremes (ex.: Serra do Mar) o solo
-    e raso (Cambissolo, Neossolo Litolico), o lencol aflora e a resposta e mais
-    rapida — comportamento de grupo C/D mesmo com textura de B. Sem esse ajuste,
-    floresta de encosta sai com CN de floresta/B (~55), subestimando o escoamento.
+    DESLIGADO POR DEFAULT (ver `compute_c_and_cn(considerar_declividade=False)`).
+    Motivo: agravar o CN por declividade e conceitualmente equivocado —
+    (1) a declividade JA entra no escoamento pelo tempo de concentracao (S=dH/L);
+        po-la tambem no CN conta o mesmo efeito duas vezes. O grupo hidrologico
+        NRCS e propriedade do SOLO (infiltracao), nao do relevo.
+    (2) para floresta densa (Mata Atlantica) o efeito e o inverso: copa,
+        serapilheira e macroporos das raizes fazem a mata infiltrar bem mesmo em
+        encosta ingreme — CN baixo. Aplicado a mata pura, este agravamento
+        inflava o CN (ex.: Gratau 55 -> 72,5) e triplicava a vazao de projeto.
+    Mantido apenas como utilitario opcional; nao usar em bacias florestadas.
     """
     base = np.vectorize(_GH_PARA_IDX.get)(gh).astype(int)
     ag = np.zeros_like(base)
@@ -364,7 +369,7 @@ def compute_c_and_cn(
     geom: BaseGeometry,
     fonte_lulc: str = "mapbiomas",
     ano_lulc: int = 2023,
-    considerar_declividade: bool = True,
+    considerar_declividade: bool = False,
 ) -> LanduseResult:
     """
     Calcula C_racional e CN_scs automaticamente para a bacia.
@@ -377,9 +382,11 @@ def compute_c_and_cn(
            com multipart).
     fonte_lulc : 'mapbiomas' (30 m, Brasil) ou 'dynamic_world' (10 m, global).
     ano_lulc : ano do produto LULC.
-    considerar_declividade : agrava o grupo hidrologico em encostas ingremes
-           (DEM Copernicus). Se o download/calculo falhar, degrada para a
-           classificacao so por textura (sem erro).
+    considerar_declividade : agrava o CN em encostas ingremes (DEM Copernicus).
+           DESLIGADO POR DEFAULT — a declividade ja entra no escoamento pelo tc,
+           e a floresta densa infiltra bem mesmo em encosta; ligar inflava o CN
+           de mata pura (ex.: 55 -> 72,5) e superestimava a vazao. Ver
+           `_agravar_gh_por_declividade`. Deixe False salvo cobertura degradada.
     """
     # 1. Baixa LULC
     if fonte_lulc == "mapbiomas":
