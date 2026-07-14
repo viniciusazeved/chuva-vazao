@@ -744,28 +744,46 @@ else:  # SCS-HU
                     continue
             if linhas:
                 df_var = pd.DataFrame(linhas)
-                i_max = int(df_var["Q pico (m³/s)"].idxmax())
-                D_crit = float(df_var.loc[i_max, "D (min)"])
-                Q_crit = float(df_var.loc[i_max, "Q pico (m³/s)"])
                 Q_atual = float(hg_mod.Q_pico_m3s(hg_df))
+                tc_min = tc_h * 60.0
                 st.line_chart(df_var.set_index("D (min)")["Q pico (m³/s)"])
                 st.dataframe(df_var, use_container_width=True, hide_index=True)
-                if D_crit > D_atual * 1.2 and Q_crit > Q_atual * 1.05:
+
+                # Duracao de projeto para SCS-HU concentrado: D ~ tc a 2*tc
+                # (ABNT/DAEE). Em blocos alternados o pico cresce SEM LIMITE com D
+                # (empilha a intensidade de pico central + soma volume), entao o
+                # maximo da varredura (sempre a maior D, ex. 24 h) NAO e a duracao
+                # de projeto — e artefato do metodo. Reportamos o Q na faixa util.
+                faixa = df_var[
+                    (df_var["D (min)"] >= 0.9 * tc_min)
+                    & (df_var["D (min)"] <= 2.2 * tc_min)
+                ]
+                Q_faixa = float(faixa["Q pico (m³/s)"].max()) if len(faixa) else Q_atual
+                st.caption(
+                    f"Duração de projeto usual do SCS-HU: **{tc_min:.0f}–{2 * tc_min:.0f} min** "
+                    f"(tc a 2·tc). Nessa faixa, Q ≈ **{Q_faixa:.0f} m³/s** — é o valor "
+                    f"a adotar. O pico cresce sem limite com D porque blocos "
+                    f"alternados empilha a intensidade de pico e soma volume: **o "
+                    f"valor de 24 h é artefato, não a duração de projeto**. Para "
+                    f"chuvas longas, use Huff em vez de blocos alternados."
+                )
+                if D_atual < 0.9 * tc_min:
                     st.warning(
-                        f"Duração crítica ≈ **{D_crit:.0f} min** (Q pico "
-                        f"{Q_crit:.1f} m³/s), maior que a duração de projeto atual "
-                        f"de {D_atual:.0f} min (Q pico {Q_atual:.1f} m³/s). O Q pode "
-                        f"estar **subestimado em ~{(Q_crit / Q_atual - 1) * 100:.0f}%**. "
-                        f"Redefina a duração na Página 2 para ~{D_crit:.0f} min "
-                        f"(ou teste a chuva de 24 h, prática usual em bacias desse "
-                        f"porte). Obs.: em blocos alternados o pico cresce "
-                        f"monotonicamente com D — adote a duração crítica com "
-                        f"critério de projeto, não o maior valor da tabela."
+                        f"A duração atual ({D_atual:.0f} min) é **menor que o tc "
+                        f"({tc_min:.0f} min)** — tende a subestimar o pico. Suba a "
+                        f"duração na Página 2 para a faixa {tc_min:.0f}–{2 * tc_min:.0f} min."
+                    )
+                elif D_atual > 3.0 * tc_min:
+                    st.warning(
+                        f"A duração atual ({D_atual:.0f} min) é bem maior que 2·tc "
+                        f"({2 * tc_min:.0f} min): em blocos alternados isso **infla o "
+                        f"pico artificialmente**. Volte para ~tc a 2·tc "
+                        f"({tc_min:.0f}–{2 * tc_min:.0f} min)."
                     )
                 else:
                     st.success(
-                        f"A duração de projeto ({D_atual:.0f} min) está próxima da "
-                        f"crítica (~{D_crit:.0f} min). Q de projeto consistente."
+                        f"A duração atual ({D_atual:.0f} min) está na faixa de projeto "
+                        f"(tc a 2·tc). Q de projeto consistente."
                     )
 
 
