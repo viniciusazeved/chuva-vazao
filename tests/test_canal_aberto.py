@@ -88,19 +88,70 @@ def test_dimensionar_gabiao_estavel_com_declividade_menor():
 
 def test_dimensionar_enrocamento_dimensiona_d50():
     r = ca.dimensionar_canal_aberto(
-        175.75, b_m=12.0, z=2.0, S=0.005, revestimento="Enrocamento (rip-rap)",
+        175.75, b_m=12.0, z=2.0, S=0.005, revestimento="Enrocamento (pedrão)",
     )
     assert r.d50_enrocamento_m is not None and r.d50_enrocamento_m > 0
     assert r.talude_estavel_enroc is True        # z=2 ok p/ enrocamento
-    assert r.v_admissivel_m_s is None            # enrocamento nao usa v_adm
+    assert r.v_admissivel_m_s is None            # granular nao usa v_adm
+    # pedra escolhida (pedrao ~500 kg, D50~57 cm) e seus derivados
+    assert r.w50_material_kg == pytest.approx(500.0)
+    assert r.d50_material_m == pytest.approx(ca.d50_de_peso(500.0))
+    assert r.estavel_granular is True            # 57 cm >= D50 minimo de Shields
+    assert r.submergencia_y_d50 == pytest.approx(r.y_op_m / r.d50_material_m)
 
 
 def test_enrocamento_talude_ingreme_avisa_instabilidade():
     r = ca.dimensionar_canal_aberto(
-        175.75, b_m=10.0, z=1.0, S=0.01, revestimento="Enrocamento (rip-rap)",
+        175.75, b_m=10.0, z=1.0, S=0.01, revestimento="Enrocamento (pedrão)",
     )
     assert r.talude_estavel_enroc is False
     assert any("angulo de repouso" in w for w in r.warnings)
+
+
+def test_strickler_reproduz_valor_classico_e_cresce_com_pedra():
+    # n=0,035 fixo classico ~ rip-rap D50~17 cm; cresce monotonicamente com D50.
+    assert ca.n_manning_strickler(0.17) == pytest.approx(0.035, abs=0.001)
+    assert ca.n_manning_strickler(0.30) > ca.n_manning_strickler(0.15)
+    with pytest.raises(ValueError):
+        ca.n_manning_strickler(0.0)
+
+
+def test_peso_d50_ida_e_volta():
+    # pedrao "de 500 kg" -> D50 nominal ~57 cm; conversao e reversivel.
+    d50 = ca.d50_de_peso(500.0)
+    assert d50 == pytest.approx(0.573, abs=0.01)
+    assert ca.peso_de_d50(d50) == pytest.approx(500.0, rel=1e-9)
+
+
+def test_classes_enrocamento_n_cresce_do_riprap_ao_matacao():
+    nomes = ["Rip-rap (pedra de proteção)", "Rachão",
+             "Enrocamento (pedrão)", "Matacão"]
+    ns = [ca.CLASSES_ENROCAMENTO[k].n_manning for k in nomes]
+    pesos = [ca.CLASSES_ENROCAMENTO[k].w50_kg for k in nomes]
+    assert ns == sorted(ns)                      # n monotonicamente crescente
+    assert pesos == sorted(pesos)                # peso crescente
+    # rip-rap na faixa tabelada BR (Rio-Aguas 0,035-0,040); matacao mais rugoso
+    assert 0.035 <= ns[0] <= 0.040
+    assert ns[-1] > 0.045
+
+
+def test_riprap_pode_faltar_onde_pedrao_aguenta():
+    # Caso agressivo: rip-rap fino nao passa no Shields, pedrao passa.
+    comum = dict(Q_projeto_m3_s=129.0, b_m=10.0, z=1.5, S=0.007)
+    rip = ca.dimensionar_canal_aberto(revestimento="Rip-rap (pedra de proteção)", **comum)
+    ped = ca.dimensionar_canal_aberto(revestimento="Enrocamento (pedrão)", **comum)
+    assert rip.estavel_granular is False
+    assert ped.estavel_granular is True
+    assert ped.n > rip.n                         # pedrao e mais rugoso
+    assert ped.y_op_m > rip.y_op_m               # e por isso da lamina maior
+
+
+def test_lamina_rasa_dispara_aviso_para_pedra_grauda():
+    r = ca.dimensionar_canal_aberto(
+        129.0, b_m=10.0, z=1.5, S=0.007, revestimento="Matacão",
+    )
+    assert r.submergencia_y_d50 < ca.SUBMERGENCIA_MIN
+    assert any("Lamina rasa" in w or "rugosidade relativa" in w for w in r.warnings)
 
 
 def test_borda_livre_default_respeita_minimo():

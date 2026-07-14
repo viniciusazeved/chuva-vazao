@@ -506,13 +506,24 @@ else:
         revest = st.selectbox(
             "Revestimento", ca.REVESTIMENTOS, index=0,
             help=(
-                "Define o n de Manning e o critério de estabilidade. Gabião/concreto/"
-                "grama são verificados por velocidade e tensão admissíveis; "
-                "enrocamento (rip-rap) tem o D50 dimensionado pela tensão trativa "
-                "(Shields)."
+                "Define o n de Manning e o critério de estabilidade.\n\n"
+                "• **Fixos** (gabião, colchão, concreto, grama, solo): n tabelado; "
+                "verificados por velocidade e tensão admissíveis.\n\n"
+                "• **Granulares** — rip-rap (pedra de proteção, dezenas de kg), "
+                "rachão, enrocamento/pedrão (~500 kg) e matacão (>1 t): o n **cresce "
+                "com o tamanho da pedra** (Strickler, n = D50^(1/6)/21,1), e a "
+                "estabilidade vem do D50 pela tensão trativa (Shields). Pedrão é bem "
+                "mais rugoso que rip-rap — não são o mesmo material."
             ),
         )
-        st.caption(f"n de Manning = {ca.N_REVESTIMENTO[revest]:.3f}")
+        _cls = ca.CLASSES_ENROCAMENTO.get(revest)
+        if _cls is not None:
+            st.caption(
+                f"Pedra ~{_cls.w50_kg:.0f} kg · D50 ~{_cls.d50_m * 100:.0f} cm · "
+                f"n (Strickler) = {_cls.n_manning:.3f}"
+            )
+        else:
+            st.caption(f"n de Manning = {ca.N_REVESTIMENTO[revest]:.3f}")
 
     borda_min = st.slider(
         "Borda livre mínima (m)", 0.2, 1.5, 0.4, 0.1,
@@ -547,10 +558,27 @@ else:
     col1.metric("Largura no topo", f"{cr.T_topo_m:.1f} m")
     col2.metric("Área molhada", f"{cr.A_m2:.1f} m²")
     col3.metric("τ fundo", f"{cr.tau_fundo_nm2:.0f} N/m²")
-    if cr.d50_enrocamento_m is not None and cr.d50_enrocamento_m == cr.d50_enrocamento_m:
-        col4.metric("D50 enrocamento", f"{cr.d50_enrocamento_m * 100:.0f} cm")
+    if cr.d50_material_m is not None:
+        # granular: pedra escolhida vs D50 minimo exigido por Shields
+        delta_cm = (cr.d50_material_m - cr.d50_enrocamento_m) * 100
+        col4.metric(
+            "D50 pedra / mín.",
+            f"{cr.d50_material_m * 100:.0f} / {cr.d50_enrocamento_m * 100:.0f} cm",
+            delta=f"{delta_cm:+.0f} cm (folga)",
+            delta_color="normal" if cr.estavel_granular else "inverse",
+            help=(
+                "D50 da pedra escolhida (classe) sobre o D50 mínimo que a tensão "
+                "trativa exige (Shields). Folga positiva = pedra estável."
+            ),
+        )
     elif cr.v_admissivel_m_s is not None:
         col4.metric("v admissível", f"{cr.v_admissivel_m_s:.1f} m/s")
+
+    if cr.d50_material_m is not None and cr.submergencia_y_d50 is not None:
+        st.caption(
+            f"Pedra ~{cr.w50_material_kg:.0f} kg (D50 nominal ~{cr.d50_material_m * 100:.0f} cm) · "
+            f"submergência y/D50 = {cr.submergencia_y_d50:.1f}"
+        )
 
     for w in cr.warnings:
         st.warning(w)
@@ -579,6 +607,10 @@ else:
         "v_admissivel_m_s": cr.v_admissivel_m_s,
         "tau_admissivel_nm2": cr.tau_admissivel_nm2,
         "d50_enrocamento_m": cr.d50_enrocamento_m,
+        "d50_material_m": cr.d50_material_m,
+        "w50_material_kg": cr.w50_material_kg,
+        "submergencia_y_d50": cr.submergencia_y_d50,
+        "estavel_granular": cr.estavel_granular,
         "Q_projeto_m3_s": cr.Q_projeto_m3_s,
         "warnings": cr.warnings,
     }
@@ -593,7 +625,14 @@ else:
             "Fr": round(cr.Fr, 3),
             "tau_fundo_N_m2": round(cr.tau_fundo_nm2, 1),
             "tau_talude_N_m2": round(cr.tau_talude_nm2, 1),
-            "D50_enrocamento_cm": (round(cr.d50_enrocamento_m * 100, 1)
-                                   if cr.d50_enrocamento_m and cr.d50_enrocamento_m == cr.d50_enrocamento_m
-                                   else None),
+            "D50_pedra_escolhida_cm": (round(cr.d50_material_m * 100, 1)
+                                       if cr.d50_material_m else None),
+            "W50_pedra_kg": (round(cr.w50_material_kg)
+                             if cr.w50_material_kg else None),
+            "D50_minimo_Shields_cm": (round(cr.d50_enrocamento_m * 100, 1)
+                                      if cr.d50_enrocamento_m and cr.d50_enrocamento_m == cr.d50_enrocamento_m
+                                      else None),
+            "submergencia_y_D50": (round(cr.submergencia_y_d50, 1)
+                                   if cr.submergencia_y_d50 else None),
+            "estavel_granular": cr.estavel_granular,
         })

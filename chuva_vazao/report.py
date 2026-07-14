@@ -816,9 +816,11 @@ def _render_canal_aberto(pdf: RelatorioPDF, dim: dict):
     pdf.add_text(
         "Canal aberto de macrodrenagem dimensionado por escoamento uniforme "
         "(Manning) para UMA secao de dimensoes livres — sem linhas em paralelo. "
-        "A estabilidade do revestimento e verificada por velocidade/tensao "
-        "admissivel; para enrocamento, o D50 minimo vem da tensao trativa "
-        "(tau = gama·y·S no fundo; criterio de Shields)."
+        "Revestimentos fixos (gabiao, concreto, grama) sao verificados por "
+        "velocidade/tensao admissivel. Para enrocamento (pedra lancada — rip-rap, "
+        "rachao, pedrao, matacao), o n de Manning cresce com o tamanho da pedra "
+        "(Strickler, n = D50^(1/6)/21,1) e a estabilidade vem do D50 pela tensao "
+        "trativa (tau = gama·y·S no fundo; criterio de Shields)."
     )
 
     z = dim.get("z_talude", 0) or 0
@@ -853,9 +855,21 @@ def _render_canal_aberto(pdf: RelatorioPDF, dim: dict):
     v_adm = dim.get("v_admissivel_m_s")
     if v_adm is not None:
         pdf.add_param("Velocidade admissivel:", f"{v_adm:.1f} m/s")
+    d50_pedra = dim.get("d50_material_m")
+    w50 = dim.get("w50_material_kg")
+    if d50_pedra is not None:
+        peso_txt = f"~{w50:.0f} kg" if w50 else "peso n/d"
+        pdf.add_param("Pedra do enrocamento:",
+                      f"{peso_txt} (D50 nominal ~{d50_pedra * 100:.0f} cm)")
     d50 = dim.get("d50_enrocamento_m")
     if d50 is not None and d50 == d50:  # not NaN
-        pdf.add_param("D50 minimo (enrocamento):", f"{d50 * 100:.0f} cm")
+        estavel = dim.get("estavel_granular")
+        sit = "" if estavel is None else (
+            "  ->  pedra estavel" if estavel else "  ->  pedra INSUFICIENTE")
+        pdf.add_param("D50 minimo (Shields):", f"{d50 * 100:.0f} cm{sit}")
+    sub = dim.get("submergencia_y_d50")
+    if sub is not None:
+        pdf.add_param("Submergencia y/D50:", f"{sub:.1f}")
 
     warnings_list = dim.get("warnings") or []
     if warnings_list:
