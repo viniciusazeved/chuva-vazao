@@ -181,6 +181,67 @@ def _hillshade_overlay(mdt_fonte, max_px: int = 800):
         return None
 
 
+def _ortofoto_overlay(orto_fonte, max_px: int = 1400):
+    """
+    Ortofoto do usuário (GeoTIFF georreferenciado) como RGBA para ImageOverlay.
+
+    Lê reamostrado (leve, <= max_px no maior lado); assume as 3 primeiras bandas
+    como R,G,B (4a banda, se houver, vira alpha). Ortofoto 8-bit passa direto;
+    16-bit/float é esticada por percentis 2–98 para contraste. Devolve
+    (rgba uint8, [[sul,oeste],[norte,leste]]) em EPSG:4326, ou None se falhar.
+    """
+    try:
+        import numpy as np  # noqa: PLC0415
+        import rasterio  # noqa: PLC0415
+        from rasterio.enums import Resampling  # noqa: PLC0415
+        from rasterio.warp import transform_bounds  # noqa: PLC0415
+
+        with rasterio.open(str(orto_fonte)) as src:
+            scale = max(1, int(max(src.height, src.width) / max_px))
+            out_h = max(1, src.height // scale)
+            out_w = max(1, src.width // scale)
+            nb = min(src.count, 4)
+            arr = src.read(
+                list(range(1, nb + 1)),
+                out_shape=(nb, out_h, out_w), resampling=Resampling.bilinear,
+            )
+            nodata = src.nodata
+            b = src.bounds
+            crs = src.crs
+
+        if nb >= 3:
+            rgb = np.stack([arr[0], arr[1], arr[2]], axis=-1).astype("float64")
+            alpha_band = arr[3] if nb == 4 else None
+        else:  # 1 banda (pancromática): replica em cinza
+            g = arr[0].astype("float64")
+            rgb = np.stack([g, g, g], axis=-1)
+            alpha_band = None
+
+        if rgb.max() > 255:  # 16-bit / float -> estica por percentis
+            lo, hi = np.nanpercentile(rgb, 2), np.nanpercentile(rgb, 98)
+            if hi > lo:
+                rgb = np.clip((rgb - lo) / (hi - lo) * 255, 0, 255)
+        rgb_u8 = rgb.astype("uint8")
+
+        alpha = np.full(rgb_u8.shape[:2], 255, dtype="uint8")
+        if alpha_band is not None:
+            alpha = np.where(alpha_band > 0, 255, 0).astype("uint8")
+        elif nodata is not None:
+            mask = np.all(np.stack([arr[i] == nodata for i in range(nb)]), axis=0)
+            alpha = np.where(mask, 0, 255).astype("uint8")
+        rgba = np.dstack([rgb_u8, alpha])
+
+        if crs is not None and crs.to_epsg() != 4326:
+            w_, s_, e_, n_ = transform_bounds(
+                crs, "EPSG:4326", b.left, b.bottom, b.right, b.top,
+            )
+        else:
+            w_, s_, e_, n_ = b.left, b.bottom, b.right, b.top
+        return rgba, [[s_, w_], [n_, e_]]
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _mancha_shapefile_zip(mancha) -> bytes:
     """Empacota o contorno da mancha (EPSG:4326) como Shapefile zipado."""
     import io  # noqa: PLC0415
@@ -363,6 +424,47 @@ cota_jus_seed = _z_terreno_centro(mdt_fonte)
 
 
 # ---------------------------------------------------------------------------
+# 1b. Ortofoto do levantamento (opcional) — base pra marcar o eixo no leito real
+# ---------------------------------------------------------------------------
+orto_fonte: str | None = None
+with st.expander("🛩️ Ortofoto do levantamento (opcional) — base para marcar o eixo"):
+    st.caption(
+        "Sobreponha a **sua** ortofoto (drone/aerofotogrametria) em GeoTIFF "
+        "georreferenciado (RGB) no mapa de desenho e no resultado — mostra o leito "
+        "atual melhor que o satélite Esri genérico. Alterna com o satélite e o "
+        "relevo no controle de camadas."
+    )
+    modo_orto = st.radio(
+        "Fonte da ortofoto",
+        ["Nenhuma", "Caminho local / URL COG (/vsicurl)", "Upload de GeoTIFF"],
+        key="inu_modo_orto", horizontal=True,
+    )
+    if modo_orto.startswith("Caminho"):
+        orto_fonte = st.text_input(
+            "Caminho local ou string VSI da ortofoto (GeoTIFF RGB)",
+            value=st.session_state.get("inu_orto_fonte", ""),
+            placeholder="D:/.../ortofoto.tif  ou  /vsicurl/https://bucket/orto.tif",
+        )
+        if orto_fonte:
+            st.session_state["inu_orto_fonte"] = orto_fonte
+    elif modo_orto.startswith("Upload"):
+        up_o = st.file_uploader(
+            "Ortofoto (.tif/.tiff)", type=["tif", "tiff"], key="inu_orto_upload",
+            help="GeoTIFF RGB georreferenciado. Arquivos grandes são lidos em "
+                 "resolução reduzida para o mapa (o cálculo não usa a ortofoto).",
+        )
+        if up_o is not None:
+            cache = Path(st.session_state.get("_dem_cache_dir", "data/dems"))
+            cache.mkdir(parents=True, exist_ok=True)
+            po = cache / up_o.name
+            po.write_bytes(up_o.read())
+            orto_fonte = str(po)
+            st.caption(f"Ortofoto salva: `{po.name}`")
+    if orto_fonte:
+        st.success("Ortofoto carregada — aparece nos mapas abaixo (controle de camadas).")
+
+
+# ---------------------------------------------------------------------------
 # 2. Vazao e rugosidade
 # ---------------------------------------------------------------------------
 
@@ -517,18 +619,32 @@ with col_map:
     m = folium.Map(location=center, zoom_start=15)
     folium.TileLayer(
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
-        attr="Esri", name="Satélite (ortofoto)",
+        attr="Esri", name="Satélite (Esri)",
     ).add_to(m)
-    # Relevo do MDT importado como camada, enquadrando o mapa na extensão do DEM.
+    # Ortofoto do usuario (se houver): base pra marcar o eixo no leito real.
+    if orto_fonte:
+        _oo = _ortofoto_overlay(orto_fonte)
+        if _oo is not None:
+            _orgba, _obnds = _oo
+            folium.raster_layers.ImageOverlay(
+                image=_orgba, bounds=_obnds, opacity=1.0,
+                name="Ortofoto (levantamento)", show=True,
+            ).add_to(m)
+            m.fit_bounds(_obnds)
+        else:
+            st.caption("⚠️ Não consegui ler a ortofoto; usando satélite/relevo.")
+    # Relevo do MDT: ligado por default, mas desligado quando há ortofoto (pra
+    # marcar o eixo sobre a ortofoto limpa). Ambos alternáveis nas camadas.
     if mostrar_relevo:
         _hs = _hillshade_overlay(mdt_fonte)
         if _hs is not None:
             _rgba, _bnds = _hs
             folium.raster_layers.ImageOverlay(
                 image=_rgba, bounds=_bnds, opacity=0.6,
-                name="Relevo (MDT importado)", show=True,
+                name="Relevo (MDT importado)", show=not bool(orto_fonte),
             ).add_to(m)
-            m.fit_bounds(_bnds)
+            if not orto_fonte:
+                m.fit_bounds(_bnds)
         else:
             st.caption("⚠️ Não consegui gerar o relevo do MDT; usando só o satélite.")
     Draw(
@@ -646,6 +762,14 @@ with st.expander("Ver no mapa de satélite (interativo)"):
         tiles="https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}",
         attr="Esri", name="Satélite",
     ).add_to(mm)
+    if orto_fonte:
+        _oo2 = _ortofoto_overlay(orto_fonte)
+        if _oo2 is not None:
+            _org, _obn = _oo2
+            folium.raster_layers.ImageOverlay(
+                image=_org, bounds=_obn, opacity=1.0,
+                name="Ortofoto (levantamento)", show=True,
+            ).add_to(mm)
     w_, s_, e_, n_ = mancha.bounds_lonlat
     rgba = _prof_rgba(mancha)
     if rgba is not None:
