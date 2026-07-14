@@ -152,6 +152,23 @@ CN_POR_CATEGORIA_E_GH: dict[str, dict[str, float]] = {
 
 
 # ---------------------------------------------------------------------------
+# Condicao hidrologica da cobertura vegetal nativa (TR-55: woods poor/fair/good)
+# ---------------------------------------------------------------------------
+# O CN de tabela e "good condition" (floresta protegida, serapilheira cobrindo o
+# solo). Mata densa/primaria (ex.: Atlantica preservada) infiltra ainda mais —
+# extrapolamos abaixo de "good" (-5). "Degradada" sobe para ~fair. O ajuste vale
+# so para vegetacao nativa arborea; nao mexe em pastagem/agricultura/urbano.
+CLASSES_VEG_NATIVA: set[str] = {
+    "floresta", "savana", "vegetacao_arborea_restinga",
+}
+DELTA_CONDICAO_FLORESTA: dict[str, float] = {
+    "densa": -5.0,       # densa / primaria (Mata Atlantica preservada)
+    "boa": 0.0,          # boa / media (good condition — default)
+    "degradada": 6.0,    # secundaria / degradada (~fair condition)
+}
+
+
+# ---------------------------------------------------------------------------
 # Classificacao grupo hidrologico a partir de textura (sand, clay)
 # ---------------------------------------------------------------------------
 # SoilGrids devolve valores em g/kg (i.e. multiplicar por 0.1 -> %).
@@ -249,6 +266,7 @@ class LanduseResult:
     composicao_lulc: pd.DataFrame = field(default_factory=pd.DataFrame)
     composicao_gh: pd.DataFrame = field(default_factory=pd.DataFrame)
     declividade_considerada: bool = False  # GH agravado por relevo (DEM)?
+    condicao_floresta: str = "boa"         # condicao hidrologica da veg. nativa
 
     def resumo_texto(self) -> str:
         lines = [
@@ -370,6 +388,7 @@ def compute_c_and_cn(
     fonte_lulc: str = "mapbiomas",
     ano_lulc: int = 2023,
     considerar_declividade: bool = False,
+    condicao_floresta: str = "boa",
 ) -> LanduseResult:
     """
     Calcula C_racional e CN_scs automaticamente para a bacia.
@@ -518,12 +537,18 @@ def compute_c_and_cn(
     # 7. C ponderado (so LULC)
     C_weighted = float((comp_lulc["C"] * comp_lulc["frac"]).sum())
 
-    # 8. CN ponderado (por pixel: cruzamento categoria x GH)
+    # 8. CN ponderado (por pixel: cruzamento categoria x GH), com ajuste da
+    #    condicao hidrologica da vegetacao nativa arborea (densa/boa/degradada).
+    delta_veg = DELTA_CONDICAO_FLORESTA.get(condicao_floresta, 0.0)
+
     def _cn_pixel(cat: str, gh: str) -> float:
         row = CN_POR_CATEGORIA_E_GH.get(cat)
         if row is None:
             return 75.0  # fallback conservador
-        return float(row.get(gh, row["C"]))
+        cn = float(row.get(gh, row["C"]))
+        if cat in CLASSES_VEG_NATIVA and delta_veg != 0.0:
+            cn = float(np.clip(cn + delta_veg, 30.0, 100.0))
+        return cn
 
     cn_vec = np.array([_cn_pixel(c, g) for c, g in zip(cat_valid, gh_valid)])
     CN_weighted = float(cn_vec.mean())
@@ -540,4 +565,5 @@ def compute_c_and_cn(
         composicao_lulc=comp_lulc,
         composicao_gh=comp_gh,
         declividade_considerada=declividade_ok,
+        condicao_floresta=condicao_floresta,
     )

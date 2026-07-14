@@ -144,6 +144,20 @@ def test_agravar_gh_limita_em_D():
     assert list(out) == ["D", "D"]
 
 
+def test_condicao_floresta_ajusta_cn_da_vegetacao_nativa():
+    """Densa baixa ~5 (floresta B 55->50); degradada sobe ~6; boa e o default."""
+    base = landuse.CN_POR_CATEGORIA_E_GH["floresta"]["B"]
+    assert base == 55
+    assert base + landuse.DELTA_CONDICAO_FLORESTA["densa"] == 50
+    assert base + landuse.DELTA_CONDICAO_FLORESTA["boa"] == 55
+    assert base + landuse.DELTA_CONDICAO_FLORESTA["degradada"] == 61
+    # o ajuste vale so para vegetacao nativa arborea
+    assert {"floresta", "savana", "vegetacao_arborea_restinga"} <= landuse.CLASSES_VEG_NATIVA
+    assert "pastagem" not in landuse.CLASSES_VEG_NATIVA
+    assert "agricultura" not in landuse.CLASSES_VEG_NATIVA
+    assert "urbano" not in landuse.CLASSES_VEG_NATIVA
+
+
 def test_classify_gh_shape_preservado():
     """Output tem mesmo shape do input."""
     sand = np.random.uniform(20, 80, size=(10, 10))

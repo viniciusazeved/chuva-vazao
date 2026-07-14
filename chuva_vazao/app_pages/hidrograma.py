@@ -60,7 +60,23 @@ def _render_calc_gee_auto(metodo: str):
             "ou o do cenário que quer representar; anos antigos refletem menos "
             "urbanização e tendem a dar C e CN menores.",
         )
-        calc_btn = col3.button("Calcular do GEE", type="primary")
+        cond_label = col3.selectbox(
+            "Condição da floresta",
+            ["Boa / média (padrão)", "Densa / primária", "Secundária / degradada"],
+            index=0,
+            help="Condição hidrológica da vegetação nativa arbórea (parâmetro do "
+            "TR-55). O CN de tabela é 'boa' (floresta protegida, ~55 em grupo B). "
+            "'Densa/primária' (Mata Atlântica preservada, infiltra mais) baixa ~5 "
+            "pontos (~50); 'secundária/degradada' sobe ~6. Afeta só floresta/savana/"
+            "restinga arbórea, não pasto/agricultura/urbano.",
+        )
+        _COND_MAP = {
+            "Boa / média (padrão)": "boa",
+            "Densa / primária": "densa",
+            "Secundária / degradada": "degradada",
+        }
+        condicao_floresta = _COND_MAP.get(cond_label, "boa")
+        calc_btn = st.button("Calcular do GEE", type="primary")
 
         fonte_key = "mapbiomas" if fonte.startswith("mapbiomas") else "dynamic_world"
 
@@ -69,6 +85,7 @@ def _render_calc_gee_auto(metodo: str):
                 try:
                     lu = landuse.compute_c_and_cn(
                         bacia_poly, fonte_lulc=fonte_key, ano_lulc=int(ano),
+                        condicao_floresta=condicao_floresta,
                     )
                     st.session_state["landuse_result"] = lu
                     st.success("C/CN calculados. Valores aplicados nos campos abaixo.")
@@ -100,6 +117,13 @@ def _render_calc_gee_auto(metodo: str):
                     "em encostas íngremes — solo raso de encosta responde mais "
                     "rápido que a textura sozinha indicaria."
                 )
+            _cond = getattr(lu, "condicao_floresta", "boa")
+            if _cond != "boa":
+                _txt = {
+                    "densa": "densa / primária (CN −5 na vegetação nativa)",
+                    "degradada": "secundária / degradada (CN +6 na vegetação nativa)",
+                }.get(_cond, _cond)
+                st.caption(f"Condição da floresta aplicada: **{_txt}**.")
             return lu
     return st.session_state.get("landuse_result")
 
