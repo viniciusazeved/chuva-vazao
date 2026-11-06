@@ -12,6 +12,7 @@ Stack: fpdf2 + kaleido (via plotly.to_image).
 """
 from __future__ import annotations
 
+import logging
 import tempfile
 from dataclasses import dataclass, field
 from datetime import date
@@ -28,6 +29,8 @@ from chuva_vazao.hidrograma import (
     volume_escoado_m3,
 )
 from chuva_vazao.idf import IDFParams
+
+logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
@@ -146,6 +149,9 @@ class RelatorioInputs:
     fig_distribuido_tc: go.Figure | None = None           # choropleth do tc por sub-bacia (Plotly)
     fig_distribuido_topologia: go.Figure | None = None    # rede / topologia das sub-bacias (Plotly)
 
+    # ----- Saida, preenchida por gerar_relatorio_pdf -----
+    figuras_com_falha: list[str] = field(default_factory=list)  # motivo de cada figura fora do PDF
+
 
 # ---------------------------------------------------------------------------
 # RelatorioPDF — fpdf2 estilizado
@@ -163,6 +169,7 @@ class RelatorioPDF(FPDF):
         self.set_margins(MARGIN_LR, MARGIN_TOP, MARGIN_LR)
         self.set_auto_page_break(auto=True, margin=MARGIN_BOT)
         self._section_counter = 0
+        self.figuras_com_falha: list[str] = []
 
     # ---- Header / footer -------------------------------------------------
     # A capa e sempre a pag. 1 e renderiza seu proprio rodape (marca + creditos);
@@ -309,16 +316,21 @@ class RelatorioPDF(FPDF):
             tmp_path = Path(tmp.name)
         try:
             try:
-                # render alto pra ficar nitido na impressao
-                fig.write_image(str(tmp_path), width=1200, height=int(height_mm * 12), scale=2)
-            except Exception:  # noqa: BLE001
-                # kaleido ausente/descasado (comum no ambiente local) — degrada sem
-                # derrubar o PDF; as figuras saem normalmente no Streamlit Cloud.
+                # 6 px/mm mantem a proporcao da figura no papel (sem esticar) e a fonte
+                # legivel; scale=2 da ~300 dpi na impressao.
+                fig.write_image(
+                    str(tmp_path), width=int(width_mm * 6), height=int(height_mm * 6), scale=2,
+                )
+            except Exception as exc:  # noqa: BLE001
+                # Nao derruba o PDF, mas a falha nao pode passar calada: vai para o
+                # log (Manage app, no Cloud) e para o aviso da pagina Exportar.
+                logger.exception("Falha ao exportar figura do PDF")
+                motivo = " ".join(str(exc).split())[:200] or "sem detalhe"
+                self.figuras_com_falha.append(f"{type(exc).__name__}: {motivo}")
                 self.set_font("Helvetica", "I", 8)
                 self.set_text_color(150, 150, 150)
                 self.multi_cell(0, 5, _latin1_safe(
-                    "[Grafico indisponivel neste ambiente local — gere o PDF no "
-                    "Streamlit Cloud para incluir as figuras.]"))
+                    "[Figura não incluída: falha ao exportar a imagem.]"))
                 self.set_text_color(*COLOR_TEXT)
                 self.ln(2)
                 return
@@ -1264,4 +1276,5 @@ def gerar_relatorio_pdf(inputs: RelatorioInputs) -> bytes:
     pdf.add_page()
     _render_referencias(pdf, modulos)
 
+    inputs.figuras_com_falha = pdf.figuras_com_falha
     return bytes(pdf.output())

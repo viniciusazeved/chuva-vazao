@@ -929,7 +929,17 @@ def plot_perfil_longitudinal(verificacao) -> go.Figure:
         hovertemplate="L=%{x:.0f} m<br>z_topo=%{y:.2f} m<extra></extra>",
     ))
 
-    # Linha d'agua — preenche entre thalweg e linha d'agua
+    # Thalweg (leito): vem antes da linha d'agua porque tonexty preenche ate o trace anterior
+    fig.add_trace(go.Scatter(
+        x=estacas_trecho, y=z_thalweg,
+        mode="lines+markers",
+        name="Thalweg (leito)",
+        line=dict(color="#6b4226", width=2),
+        marker=dict(size=8, symbol="triangle-up"),
+        hovertemplate="L=%{x:.0f} m<br>z_thalweg=%{y:.2f} m<extra></extra>",
+    ))
+
+    # Linha d'agua: preenche entre thalweg e linha d'agua
     fig.add_trace(go.Scatter(
         x=estacas_trecho, y=z_agua,
         mode="lines+markers",
@@ -939,16 +949,6 @@ def plot_perfil_longitudinal(verificacao) -> go.Figure:
         hovertemplate="L=%{x:.0f} m<br>y_w=%{y:.2f} m<extra></extra>",
         fill="tonexty",
         fillcolor="rgba(31, 119, 180, 0.20)",
-    ))
-
-    # Thalweg (leito) — preenchimento ate aqui pra dar a sensacao de leito
-    fig.add_trace(go.Scatter(
-        x=estacas_trecho, y=z_thalweg,
-        mode="lines+markers",
-        name="Thalweg (leito)",
-        line=dict(color="#6b4226", width=2),
-        marker=dict(size=8, symbol="triangle-up"),
-        hovertemplate="L=%{x:.0f} m<br>z_thalweg=%{y:.2f} m<extra></extra>",
     ))
 
     # Linha critica
@@ -1038,11 +1038,12 @@ def fig_subbacias_choropleth(gdf_utm, ids, valores, label: str = "CN2") -> go.Fi
 
     vals = [float(v) for v in valores]
     vmin, vmax = (min(vals), max(vals)) if vals else (0.0, 1.0)
-    span = (vmax - vmin) or 1.0
+    span = vmax - vmin
     fig = go.Figure()
     for geom, sid, val in zip(gdf_utm.geometry, ids, vals):
         polys = list(geom.geoms) if geom.geom_type == "MultiPolygon" else [geom]
-        cor = sample_colorscale("YlOrBr", (val - vmin) / span)[0]
+        # Valor unico: meio da escala, a mesma cor que a colorbar mostra para cmin == cmax.
+        cor = sample_colorscale("YlOrBr", (val - vmin) / span if span else 0.5)[0]
         for poly in polys:
             xs, ys = poly.exterior.coords.xy
             fig.add_trace(go.Scatter(
@@ -1180,12 +1181,13 @@ def fig_mancha_hillshade(mancha):
             ),
             row=1, col=k + 1,
         )
-    # N pra cima (go.Image inverteria o eixo Y por padrao) + aspecto 1:1.
+    # N pra cima (go.Image inverteria o eixo Y por padrao) + aspecto 1:1. So o painel
+    # esquerdo ancora a escala; o direito acompanha, senao perde o 1:1 em recorte alto.
     fig.update_yaxes(autorange=True, scaleanchor="x", scaleratio=1,
                      title_text="N (m, UTM)", row=1, col=1)
-    fig.update_yaxes(autorange=True, scaleanchor="x2", scaleratio=1, row=1, col=2)
+    fig.update_yaxes(autorange=True, row=1, col=2)
     fig.update_xaxes(title_text="E (m, UTM)", row=1, col=1)
-    fig.update_xaxes(title_text="E (m, UTM)", row=1, col=2)
+    fig.update_xaxes(title_text="E (m, UTM)", matches="x", row=1, col=2)
     fig.update_layout(template="plotly_white", height=520,
                       margin=dict(l=10, r=10, t=40, b=10))
     return fig

@@ -163,6 +163,20 @@ if st.button("Gerar PDF", type="primary"):
 
         # Hidrologia
         if modulos_selecionados.get("hidrologia"):
+            # Racional (chuva zerada) e Distribuido (sem a coluna) nao tem hietograma
+            # junto do hidrograma: sem painel de chuva.
+            hidro = st.session_state.hidrograma
+            if "hietograma_mm" in hidro and hidro["hietograma_mm"].any():
+                fig_hidrograma = plots.plot_hietograma_hidrograma(
+                    hidro,
+                    titulo=f"Hietograma + Hidrograma" + (f" — {posto}" if posto else ""),
+                )
+            else:
+                metodo = st.session_state.get("metodo_chuva_vazao") or "sintético"
+                fig_hidrograma = plots.plot_hidrograma(
+                    hidro,
+                    titulo=f"Hidrograma de projeto ({metodo})" + (f", {posto}" if posto else ""),
+                )
             kwargs.update(
                 idf_params=st.session_state.idf_params,
                 idf_table=st.session_state.idf_table,
@@ -183,10 +197,7 @@ if st.button("Gerar PDF", type="primary"):
                     st.session_state.hietograma,
                     titulo=f"Hietograma — {st.session_state.get('metodo_hietograma', '')}",
                 ),
-                fig_hidrograma=plots.plot_hietograma_hidrograma(
-                    st.session_state.hidrograma,
-                    titulo=f"Hietograma + Hidrograma" + (f" — {posto}" if posto else ""),
-                ),
+                fig_hidrograma=fig_hidrograma,
             )
             scs = st.session_state.get("scs_params")
             if scs is None:
@@ -310,7 +321,14 @@ if st.button("Gerar PDF", type="primary"):
         inputs = RelatorioInputs(**kwargs)
         pdf_bytes = gerar_relatorio_pdf(inputs)
 
-    st.success(f"PDF gerado ({len(pdf_bytes):,} bytes).")
+    falhas = inputs.figuras_com_falha
+    if falhas:
+        st.error(
+            f"{len(falhas)} figura(s) ficaram fora do PDF por falha na exportação da "
+            f"imagem. Não use este PDF como entrega. Motivo: {falhas[0]}"
+        )
+    else:
+        st.success(f"PDF gerado ({len(pdf_bytes):,} bytes).")
     nome_base = (posto or "chuva_vazao").replace(" ", "_")
     selected_keys = [k for k, v in modulos_selecionados.items() if v]
     sufixo = "_".join(selected_keys[:3]) if selected_keys else "vazio"

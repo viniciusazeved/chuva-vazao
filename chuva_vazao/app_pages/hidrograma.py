@@ -392,8 +392,10 @@ def _render_distribuido(area_km2: float):
         mode="lines", line=dict(color="#08519c", width=2.5),
         fill="tozeroy", fillcolor="rgba(8,81,156,0.15)",
     ))
+    # plotly_white traz automargin: sem ele a margem fixa corta os eixos no PDF.
     fig_hidro.update_layout(xaxis_title="tempo (h)", yaxis_title="Q (m³/s)", height=430,
-                            margin=dict(l=10, r=10, t=30, b=10), showlegend=False)
+                            margin=dict(l=10, r=10, t=30, b=10), showlegend=False,
+                            template="plotly_white")
 
     cA, cB = st.columns(2)
     with cA:
