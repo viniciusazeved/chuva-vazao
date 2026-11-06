@@ -118,6 +118,7 @@ class RelatorioInputs:
     metodo_chuva_vazao: str | None = None
     C_racional: float | None = None
     uso_solo_racional: str | None = None
+    racional: dict | None = None                          # area_km2, tc_h, TR e i_mmh que geraram o Q
 
     # ----- Modulo Verificacao de Secao (pagina 4) -----
     verificacao_secao: object | None = None              # VerificacaoTrecho
@@ -562,15 +563,15 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_page()
     pdf.add_section("Equacao IDF")
     pdf.add_text(
-        "Equacao Intensidade-Duracao-Frequencia (convencao do catalogo embutido):\n\n"
-        "    i = K * TR^a / (t + c)^b\n\n"
-        "i (mm/h), TR (anos), t (min), K/a/b/c — coeficientes do posto."
+        "Equacao Intensidade-Duracao-Frequencia:\n\n"
+        "    i = K * TR^a / (t + b)^c\n\n"
+        "i (mm/h), TR (anos), t (min); K, a, b, c: coeficientes do posto."
     )
     p = inp.idf_params
     pdf.add_param("K:", f"{p.K:.3f}")
     pdf.add_param("a (expoente TR):", f"{p.expoente_tr:.4f}")
-    pdf.add_param("b (expoente duracao):", f"{p.expoente_duracao:.4f}")
-    pdf.add_param("c (constante, min):", f"{p.constante_duracao:.2f}")
+    pdf.add_param("b (constante, min):", f"{p.constante_duracao:.2f}")
+    pdf.add_param("c (expoente duracao):", f"{p.expoente_duracao:.4f}")
     if getattr(p, "rmse_rel", None) is not None:
         emax = p.erro_max_rel or 0.0
         pdf.add_param(
@@ -598,23 +599,27 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
         widths = [1.4] + [1.0] * (n - 1)
         pdf.add_dataframe(idf_display, col_widths=widths)
 
-    # Hietograma
+    # Hietograma (o Distribuido usa chuva propria, descrita no memorial dele)
     pdf.add_page()
-    pdf.add_section("Hietograma de Projeto")
-    if inp.metodo_hietograma:
-        pdf.add_text(
-            f"Metodo: {inp.metodo_hietograma}.\n"
-            f"TR = {inp.TR_anos:g} anos, duracao = {inp.duracao_min:g} min, "
-            f"passo dt = {inp.dt_min:g} min, altura total = {inp.hietograma.sum():.2f} mm."
-        )
-    if inp.fig_hietograma is not None:
-        pdf.add_figure(inp.fig_hietograma, height_mm=85)
+    if inp.metodo_chuva_vazao != "Distribuído":
+        pdf.add_section("Hietograma de Projeto")
+        if inp.metodo_hietograma:
+            texto = (
+                f"Metodo: {inp.metodo_hietograma}.\n"
+                f"TR = {inp.TR_anos:g} anos, duracao = {inp.duracao_min:g} min, "
+                f"passo dt = {inp.dt_min:g} min, altura total = {inp.hietograma.sum():.2f} mm."
+            )
+            if inp.metodo_chuva_vazao == "Racional":
+                texto += "\nO Método Racional não usa este hietograma: a vazão vem da intensidade i(tc)."
+            pdf.add_text(texto)
+        if inp.fig_hietograma is not None:
+            pdf.add_figure(inp.fig_hietograma, height_mm=85)
 
-    # Bacia / SCS
+    # Parametros da bacia: cada metodo mostra so o que de fato usou
     if inp.scs_params is not None:
         pdf.add_section("Parametros da Bacia e SCS")
         s = inp.scs_params
-        pdf.add_param("Area:", f"{s.area_km2:.3f} km^2")
+        pdf.add_param("Área adotada:", f"{s.area_km2:.3f} km^2")
         pdf.add_param("Tempo de concentracao:", f"{s.tempo_concentracao_h:.3f} h")
         pdf.add_param("CN:", f"{s.CN:.1f}")
         pdf.add_param("S (retencao):", f"{s.S_mm:.2f} mm")
@@ -622,30 +627,53 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
 
     # Metodo Racional (sub-bloco)
     if inp.metodo_chuva_vazao == "Racional":
-        pdf.add_subsection("Metodo Racional")
+        r = inp.racional or {}
+        pdf.add_section("Parâmetros da Bacia")
+        if "area_km2" in r:
+            pdf.add_param("Área adotada:", f"{r['area_km2']:.3f} km^2")
+        if "tc_h" in r:
+            pdf.add_param("Tempo de concentração:", f"{r['tc_h']:.3f} h")
+        pdf.add_subsection("Método Racional")
         pdf.add_text(
-            "Q = C . i(tc) . A / 3.6. Valido para bacias pequenas (A <= 2 km2). "
-            "Pressupoe duracao critica = tc e chuva uniforme sobre a bacia."
+            "Q = C . i(tc) . A / 3.6. Válido para bacias pequenas (A <= 2 km2). "
+            "Pressupõe duração crítica = tc e chuva uniforme sobre a bacia."
         )
         if inp.C_racional is not None:
-            pdf.add_param("Coeficiente C:", f"{inp.C_racional:.2f}")
+            pdf.add_param("Coeficiente C:", f"{inp.C_racional:.3g}")
+        if "TR" in r:
+            pdf.add_param("Tempo de retorno:", f"{r['TR']:g} anos")
+        if "i_mmh" in r:
+            pdf.add_param("Intensidade i(tc):", f"{r['i_mmh']:.1f} mm/h")
         if inp.uso_solo_racional:
             pdf.add_param("Uso do solo:", inp.uso_solo_racional)
 
     # Hidrograma
     pdf.add_section("Hidrograma de Projeto")
-    pdf.add_text(
-        "Convolucao do hietograma excedente (SCS-CN) com hidrograma unitario "
-        "triangular SCS. t_pico = D/2 + 0.6*tc; t_base = 2.67*t_pico; "
-        "Q_pico = 0.208 * A / t_pico [m^3/s/mm]."
-    )
+    if inp.metodo_chuva_vazao == "Racional":
+        pdf.add_text(
+            "Hidrograma triangular sintético a partir da vazão do Método Racional: "
+            "t_pico = tc; t_base = 2.67*tc. O pico é a própria vazão do Racional."
+        )
+    elif inp.metodo_chuva_vazao == "Distribuído":
+        pdf.add_text(
+            "Hidrograma no exutório do modelo distribuído por sub-bacias: SCS-CN em "
+            "cada sub-bacia, com propagação na rede por Muskingum-Cunge."
+        )
+    else:
+        pdf.add_text(
+            "Convolucao do hietograma excedente (SCS-CN) com hidrograma unitario "
+            "triangular SCS. t_pico = D/2 + 0.6*tc; t_base = 2.67*t_pico; "
+            "Q_pico = 0.208 * A / t_pico [m^3/s/mm]."
+        )
+    idx = inp.hidrograma.index
+    dt_hidrograma = float(idx[1] - idx[0]) if len(idx) > 1 else inp.dt_min
     pdf.add_kv_row([
         ("Q_pico:", f"{Q_pico_m3s(inp.hidrograma):.2f} m³/s"),
         ("Tempo ao pico:", f"{tempo_ao_pico_min(inp.hidrograma):.1f} min"),
     ])
     pdf.add_kv_row([
         ("Volume escoado:", f"{volume_escoado_m3(inp.hidrograma):,.0f} m³"),
-        ("dt simulado:", f"{inp.dt_min:g} min"),
+        ("dt simulado:", f"{dt_hidrograma:.3g} min"),
     ])
     if inp.fig_hidrograma is not None:
         pdf.add_figure(inp.fig_hidrograma, height_mm=110)
@@ -655,27 +683,41 @@ def _render_hidrologia(pdf: RelatorioPDF, inp: RelatorioInputs):
     pdf.add_section("Metodologia")
     pdf.add_subsection("IDF")
     pdf.add_text(
-        "Coeficientes K, a, b, c oriundos do catalogo embutido de postos "
-        "pluviometricos. Convencao: b = expoente da duracao, c = constante "
-        "temporal em minutos."
+        "Coeficientes K, a, b, c do posto, informados pelo IDF-generator ou "
+        "manualmente. Convencao: b = constante temporal em minutos, c = expoente "
+        "da duracao."
     )
-    pdf.add_subsection("Hietograma")
-    pdf.add_text(
-        "Blocos Alternados (Chicago): redistribui alturas incrementais "
-        "derivadas da IDF em torno do bloco central. Huff: distribui a altura "
-        "total pela curva adimensional do quartil escolhido."
-    )
-    pdf.add_subsection("Escoamento Superficial (SCS-CN)")
-    pdf.add_text(
-        "Q = (P − Ia)² / (P − Ia + S);  Ia = 0,2 · S;  S = 25 400 / CN − 254 (mm). "
-        "Aplicado cumulativamente sobre o hietograma para gerar o excedente."
-    )
-    pdf.add_subsection("Hidrograma Unitario Triangular SCS")
-    pdf.add_text(
-        "t_lag = 0,6 · tc; t_pico = D/2 + t_lag; t_base = 2,67 · t_pico; "
-        "Q_pico = 0,208 · A / t_pico [m³/s/mm]. Convolucao numerica do "
-        "hietograma excedente (mm) com a UH (m³/s/mm) produz Q(t)."
-    )
+    if inp.metodo_chuva_vazao != "Distribuído":
+        pdf.add_subsection("Hietograma")
+        pdf.add_text(
+            "Blocos Alternados (Chicago): redistribui alturas incrementais "
+            "derivadas da IDF em torno do bloco central. Huff: distribui a altura "
+            "total pela curva adimensional do quartil escolhido."
+        )
+    if inp.metodo_chuva_vazao == "Racional":
+        pdf.add_subsection("Método Racional e hidrograma sintético")
+        pdf.add_text(
+            "Q = C · i(tc) · A / 3,6, com i da IDF para duração igual a tc. O hidrograma "
+            "é um triângulo com pico nessa vazão: t_pico = tc; t_base = 2,67 · tc."
+        )
+    elif inp.metodo_chuva_vazao == "Distribuído":
+        pdf.add_subsection("Modelo distribuído por sub-bacias")
+        pdf.add_text(
+            "Excedente por SCS-CN e hidrograma unitário triangular em cada sub-bacia, "
+            "com propagação pela rede de drenagem por Muskingum-Cunge até o exutório."
+        )
+    else:
+        pdf.add_subsection("Escoamento Superficial (SCS-CN)")
+        pdf.add_text(
+            "Q = (P − Ia)² / (P − Ia + S);  Ia = 0,2 · S;  S = 25 400 / CN − 254 (mm). "
+            "Aplicado cumulativamente sobre o hietograma para gerar o excedente."
+        )
+        pdf.add_subsection("Hidrograma Unitario Triangular SCS")
+        pdf.add_text(
+            "t_lag = 0,6 · tc; t_pico = D/2 + t_lag; t_base = 2,67 · t_pico; "
+            "Q_pico = 0,208 · A / t_pico [m³/s/mm]. Convolucao numerica do "
+            "hietograma excedente (mm) com a UH (m³/s/mm) produz Q(t)."
+        )
 
 
 def _render_verificacao_secao(pdf: RelatorioPDF, inp: RelatorioInputs):

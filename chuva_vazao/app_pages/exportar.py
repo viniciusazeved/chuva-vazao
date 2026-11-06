@@ -148,6 +148,23 @@ if not any(modulos_selecionados.values()):
     st.info("Selecione pelo menos um módulo para gerar o PDF.")
     st.stop()
 
+# Aviso, nao bloqueio: a area da Pagina 3 pode ter sido alterada de proposito.
+# Compara a area que gerou o hidrograma, nao o campo da sessao, que muda sem recalcular.
+metodo_atual = st.session_state.get("metodo_chuva_vazao")
+area_hidrologia = None
+if metodo_atual == "SCS-HU" and st.session_state.get("scs_params") is not None:
+    area_hidrologia = st.session_state.scs_params.area_km2
+elif metodo_atual == "Racional" and st.session_state.get("racional_params"):
+    area_hidrologia = st.session_state.racional_params["area_km2"]
+if modulos_selecionados.get("bacia") and modulos_selecionados.get("hidrologia") and area_hidrologia:
+    area_bacia = st.session_state.basin_metrics.area_km2
+    if abs(area_hidrologia - area_bacia) > 0.01 * area_bacia:
+        st.warning(
+            f"A área usada no cálculo da hidrologia ({area_hidrologia:.3f} km²) difere da "
+            f"área da bacia delineada ({area_bacia:.3f} km²). O PDF mostra os dois valores: "
+            "confira a Página 3 antes de entregar."
+        )
+
 
 # ---------------------------------------------------------------------------
 # Gerar PDF
@@ -189,6 +206,9 @@ if st.button("Gerar PDF", type="primary"):
                 metodo_chuva_vazao=st.session_state.get("metodo_chuva_vazao"),
                 C_racional=st.session_state.get("C_racional"),
                 uso_solo_racional=st.session_state.get("uso_solo_racional"),
+                racional=st.session_state.get("racional_params"),
+                # So o SCS-HU tem CN; Racional e Distribuido gravam None na Pagina 3.
+                scs_params=st.session_state.get("scs_params"),
                 fig_idf=plots.plot_idf_curves(
                     st.session_state.idf_table,
                     titulo=f"IDF — {posto}" if posto else "IDF",
@@ -199,15 +219,6 @@ if st.button("Gerar PDF", type="primary"):
                 ),
                 fig_hidrograma=fig_hidrograma,
             )
-            scs = st.session_state.get("scs_params")
-            if scs is None:
-                from chuva_vazao.hidrograma import SCSParams
-                scs = SCSParams(
-                    area_km2=float(st.session_state.get("area_km2") or 1.0),
-                    tempo_concentracao_h=float(st.session_state.get("tc_h") or 1.0),
-                    CN=75.0,
-                )
-            kwargs["scs_params"] = scs
 
         # Bacia
         if modulos_selecionados.get("bacia"):

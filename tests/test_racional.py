@@ -52,3 +52,20 @@ def test_hidrograma_triangular_conserva_volume():
     V_num = float(np.trapezoid(hg["Q_m3s"].values, dx=dt_s))
     V_ana = 0.5 * (2.67 * tc_min * 60) * Qp
     assert V_num == pytest.approx(V_ana, rel=0.01)
+
+
+@pytest.mark.parametrize("tc_min", [3.0, 3.3, 7.5, 10.2, 10.23, 47.77, 120.5, 2880.0])
+def test_hidrograma_triangular_pico_e_volume_na_faixa_de_tc_do_app(tc_min):
+    """O pico e o proprio Qp, em t = tc, em grade uniforme, sem perder volume."""
+    import numpy as np
+
+    Qp = 9.08
+    hg = hidrograma.hidrograma_triangular_sintetico(Qp_m3_s=Qp, tc_min=tc_min)
+
+    assert hidrograma.Q_pico_m3s(hg) == pytest.approx(Qp, rel=1e-9)
+    assert hidrograma.tempo_ao_pico_min(hg) == pytest.approx(tc_min, rel=1e-9)
+    assert hg["Q_m3s"].iloc[0] == 0.0
+    assert hg["Q_m3s"].iloc[-1] == 0.0
+    assert np.allclose(np.diff(hg.index), hg.index[1] - hg.index[0])
+    V_ana = 0.5 * (2.67 * tc_min * 60) * Qp
+    assert hidrograma.volume_escoado_m3(hg) == pytest.approx(V_ana, rel=0.003)

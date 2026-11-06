@@ -320,15 +320,16 @@ def hidrograma_triangular_sintetico(
     Relacao classica SCS:
         t_pico = tc
         t_base = razao_base_pico * tc  (default 2.67, mesma da UH triangular)
+
+    O passo efetivo fica o mais perto possivel de dt_min com tc caindo num no da
+    grade; senao o pico amostrado sai abaixo de Qp, e esta serie e a vazao de
+    projeto padrao das paginas 4 a 7. No minimo 5 passos ate o pico, para o
+    volume nao errar mais de 0,3% quando tc e muito curto.
     """
     t_pico = tc_min
     t_base = razao_base_pico * tc_min
-    n = int(np.ceil(t_base / dt_min)) + 1
-    tempos = np.arange(n) * dt_min
-    Q = np.zeros(n)
-    for i, t in enumerate(tempos):
-        if t <= t_pico:
-            Q[i] = Qp_m3_s * (t / t_pico)
-        elif t <= t_base:
-            Q[i] = Qp_m3_s * ((t_base - t) / (t_base - t_pico))
+    dt_efetivo = t_pico / max(5, round(t_pico / dt_min))
+    n = int(np.ceil(t_base / dt_efetivo)) + 1
+    tempos = np.round(np.arange(n) * dt_efetivo, 6)  # sem ruido de ponto flutuante no CSV
+    Q = np.interp(tempos, [0.0, t_pico, t_base], [0.0, Qp_m3_s, 0.0])
     return pd.DataFrame({"tempo_min": tempos, "Q_m3s": Q}).set_index("tempo_min")

@@ -656,6 +656,11 @@ if metodo == "Racional":
     st.session_state.Q_pico_racional = Q_racional
     st.session_state.C_racional = C
     st.session_state.uso_solo_racional = uso_solo
+    # O que gerou esta vazao: o relatorio nao pode reler os campos da sessao, que
+    # mudam sem recalcular o hidrograma (ex.: Aplicar na Pagina 0).
+    st.session_state.racional_params = {
+        "area_km2": area, "tc_h": tc_h, "TR": st.session_state.TR, "i_mmh": i_tc,
+    }
 
     st.plotly_chart(
         plots.plot_hidrograma(hg_sint, titulo="Hidrograma triangular sintético (Racional)"),
